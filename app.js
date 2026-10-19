@@ -60,7 +60,7 @@ const DEFAULT_KPIS = [
 ];
 const KPI_TEMPLATES = DEFAULT_KPIS;
 
-const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["money", "収支"], ["members", "メンバー"], ["settings", "設定"]];
+const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "<span class=\"hide-sm\">業務</span>カレンダー"], ["money", "収支"], ["members", "メンバー"], ["settings", "設定"]];
 const S = {
   user: null, member: null, isAdmin: false, dataKey: "",
   members: [], config: null, tasks: [], kpis: [], ledger: [],
@@ -370,8 +370,8 @@ function vMoney() {
     <div class="fig"><div class="k">月末時点の残高</div><div class="v">${yen(bal)}</div></div>
   </div>
   <div class="stack">
-    ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>日付</th><th>項目</th><th>区分</th><th>カテゴリ</th><th class="num">金額</th><th>担当者</th><th>支払方法</th><th>精算</th></tr></thead><tbody>
-      ${rows.map(r => `<tr class="${S.isAdmin ? "click" : ""}" ${S.isAdmin ? `data-act="led-edit" data-id="${esc(r.id)}" tabindex="0"` : ""}><td>${md(r.date)}</td><td style="white-space:normal;min-width:12em">${esc(r.title)}${r.memo ? `<div class="muted" style="font-size:.75rem">${esc(r.memo)}</div>` : ""}</td><td><span class="pill ${r.type === "収入" ? "good" : "bad"}">${esc(r.type)}</span></td><td>${esc(r.category || "")}</td><td class="num ${r.type === "収入" ? "pos" : "neg"}">${r.type === "収入" ? "+" : "−"}${yen(r.amount)}</td><td>${esc(r.owner || "")}</td><td>${esc(r.method || "")}</td><td>${stPill(r.settled)}</td></tr>`).join("")}
+    ${rows.length ? `<div class="tablewrap"><table class="ledger-table"><thead><tr><th>日付</th><th>項目</th><th>区分</th><th>カテゴリ</th><th class="num">金額</th><th>担当者</th><th>支払方法</th><th>精算</th></tr></thead><tbody>
+      ${rows.map(r => `<tr class="${S.isAdmin ? "click" : ""}" ${S.isAdmin ? `data-act="led-edit" data-id="${esc(r.id)}" tabindex="0"` : ""}><td class="c-date">${md(r.date)}</td><td class="c-title" style="white-space:normal;min-width:12em">${esc(r.title)}${r.memo ? `<div class="muted" style="font-size:.75rem">${esc(r.memo)}</div>` : ""}</td><td class="c-meta"><span class="pill ${r.type === "収入" ? "good" : "bad"}">${esc(r.type)}</span></td><td class="c-meta">${esc(r.category || "")}</td><td class="num c-amt ${r.type === "収入" ? "pos" : "neg"}">${r.type === "収入" ? "+" : "−"}${yen(r.amount)}</td><td class="c-meta">${esc(r.owner || "")}</td><td class="c-meta">${esc(r.method || "")}</td><td class="c-meta">${stPill(r.settled)}</td><td class="c-sub">${esc([r.category, r.owner, r.method].filter(Boolean).join("・"))} ${stPill(r.settled)}</td></tr>`).join("")}
     </tbody></table></div>` : `<div class="empty"><p>${monthLabel(m)}の記録はありません。</p>${S.isAdmin ? `<button class="btn small" type="button" data-act="led-new">記録を追加</button>` : ""}</div>`}
     ${rows.length ? `<div class="grid2"><section class="panel"><h3>支出の内訳</h3>${Object.keys(cats).length ? bars(cats, "out") : `<p class="muted" style="margin:0">支出はありません。</p>`}</section>
       <section class="panel"><h3>収入の内訳</h3>${Object.keys(icats).length ? bars(icats, "") : `<p class="muted" style="margin:0">収入はありません。</p>`}</section></div>` : ""}
