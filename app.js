@@ -1,0 +1,579 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, FieldPath, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { firebaseConfig, ADMIN_EMAILS } from "./config.js";
+
+/* ================= utilities ================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pad = n => String(n).padStart(2, "0");
+const ymd = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+const ym = d => d.getFullYear() + "-" + pad(d.getMonth() + 1);
+const parse = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d || 1); };
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const TODAY = ymd(today), THISMONTH = ym(today);
+const yen = n => "¥" + Math.round(Number(n) || 0).toLocaleString("ja-JP");
+const num = n => (Math.round((Number(n) || 0) * 10) / 10).toLocaleString("ja-JP");
+const DOW = ["日", "月", "火", "水", "木", "金", "土"];
+const md = s => { if (!s) return ""; const d = parse(s); return (d.getMonth() + 1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")"; };
+const monthLabel = m => { const [y, mm] = m.split("-"); return y + "年" + Number(mm) + "月"; };
+const shiftMonth = (m, k) => { const d = parse(m + "-01"); d.setMonth(d.getMonth() + k); return ym(d); };
+const mondayOf = d => { const x = new Date(d); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return x; };
+const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
+function weeksOfMonth(m) {
+  const first = parse(m + "-01"), last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  const out = []; for (let w = mondayOf(first); w <= last; w.setDate(w.getDate() + 7)) out.push(ymd(w)); return out;
+}
+const THISWEEK = ymd(mondayOf(today));
+const ls = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 2400); }
+function errMsg(e) {
+  const c = e && e.code || "";
+  if (c.includes("permission-denied")) return "この操作をする権限がありません。";
+  if (c.includes("unavailable")) return "通信できませんでした。電波の良い場所でもう一度試してください。";
+  return "うまくいきませんでした（" + (c || "不明なエラー") + "）。もう一度試してください。";
+}
+
+/* ================= firebase ================= */
+const configured = !!firebaseConfig.apiKey && !!firebaseConfig.projectId;
+let auth, db;
+if (configured) {
+  const app = initializeApp(firebaseConfig);
+  auth = getAuth(app); db = getFirestore(app);
+}
+
+const DEFAULTS = {
+  routines: ["毎回の募集", "メンター依頼", "場所取り", "スケジュール管理", "活動記録", "インスタ投稿", "LINE対応", "口座・支出管理", "メンバー管理", "GD講習会運営"],
+  incomeCats: ["入会費", "イベント参加費", "協賛・スポンサー", "その他"],
+  expenseCats: ["会場費", "広告・宣伝費", "メンター謝礼", "飲食費", "ツール・サブスク", "その他"],
+  methods: ["現金", "PayPay", "銀行振込", "クレジット"]
+};
+const KPI_TEMPLATES = [
+  { name: "登録会員数", unit: "人", mode: "latest" },
+  { name: "新規入会者数", unit: "人", mode: "sum" },
+  { name: "体験参加者数", unit: "人", mode: "sum" },
+  { name: "活動参加者数（延べ）", unit: "人", mode: "sum" },
+  { name: "インスタフォロワー数", unit: "人", mode: "latest" },
+  { name: "イベント開催数", unit: "回", mode: "sum" }
+];
+
+const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["money", "収支"], ["members", "メンバー"], ["settings", "設定"]];
+const S = {
+  user: null, member: null, isAdmin: false, dataKey: "",
+  members: [], config: null, tasks: [], kpis: [], ledger: [],
+  ready: {}, need: [],
+  tab: "home", kpiMonth: THISMONTH, calMonth: THISMONTH, selDay: TODAY, moneyMonth: THISMONTH,
+  onlyMine: ls.get("cb_onlymine", "0") === "1"
+};
+let memberUnsub = null, dataUnsubs = [];
+const cfg = () => Object.assign({}, DEFAULTS, S.config || {});
+const uid = () => S.user && S.user.uid;
+const isActive = () => S.isAdmin || (S.member && S.member.status === "active");
+const canFinance = () => S.isAdmin || (isActive() && S.member && S.member.finance === true);
+const activeMembers = () => S.members.filter(m => m.status === "active").sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+const memName = id => { const m = S.members.find(x => x.id === id); return m ? (m.name || m.email || "名前未設定") : "（不明）"; };
+const mColor = id => { const i = activeMembers().findIndex(m => m.id === id); return i < 0 ? "var(--muted)" : "var(--m" + (i % 6 + 1) + ")"; };
+const whoTag = id => `<span class="who" style="--mc:${mColor(id)}"><i></i>${esc(memName(id))}</span>`;
+const tabsVisible = () => TABS_ALL.filter(([k]) => (k !== "money" || canFinance()) && ((k !== "members" && k !== "settings") || S.isAdmin));
+
+/* ================= auth & data lifecycle ================= */
+function stopData() { dataUnsubs.forEach(u => u()); dataUnsubs = []; S.ready = {}; S.need = []; S.tasks = []; S.kpis = []; S.ledger = []; S.members = []; S.config = null; }
+function resetAll() { if (memberUnsub) { memberUnsub(); memberUnsub = null; } stopData(); S.member = null; S.isAdmin = false; S.dataKey = ""; }
+
+if (configured) {
+  getRedirectResult(auth).catch(e => console.warn(e));
+  onAuthStateChanged(auth, async u => {
+    resetAll(); S.user = u;
+    if (!u) { render(); return; }
+    S.isAdmin = !!u.email && ADMIN_EMAILS.map(e => e.toLowerCase()).includes(u.email.toLowerCase());
+    const ref = doc(db, "members", u.uid);
+    try {
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, { name: u.displayName || u.email || "", email: u.email || "", status: S.isAdmin ? "active" : "pending", finance: S.isAdmin, createdAt: serverTimestamp() });
+      }
+    } catch (e) { S.fatal = errMsg(e); render(); return; }
+    memberUnsub = onSnapshot(ref, s => {
+      S.member = s.exists() ? s.data() : null;
+      const key = isActive() ? "on|" + (canFinance() ? "f" : "-") : "off";
+      if (key !== S.dataKey) { stopData(); S.dataKey = key; if (key !== "off") startData(); }
+      render();
+    }, e => { S.fatal = errMsg(e); render(); });
+  });
+}
+
+function listen(key, ref, fn) {
+  S.need.push(key);
+  dataUnsubs.push(onSnapshot(ref, snap => { fn(snap); S.ready[key] = true; render(); }, e => { console.warn(key, e); S.ready[key] = true; render(); }));
+}
+const docsOf = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+function startData() {
+  listen("members", collection(db, "members"), s => S.members = docsOf(s));
+  listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
+  listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
+  if (S.isAdmin) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
+  else {
+    // 一般メンバーは「全員に公開」「自分に公開」「自分が担当」のKPIだけを取得（ルール上それ以外は読めない）
+    const parts = {};
+    const merge = () => { const m = {}; Object.values(parts).forEach(a => a.forEach(k => m[k.id] = k)); S.kpis = Object.values(m); };
+    [["viewers", "array-contains", "all"], ["viewers", "array-contains", uid()], ["owner", "==", uid()]].forEach((w, i) =>
+      listen("kpis" + i, query(collection(db, "kpis"), where(...w)), s => { parts[i] = docsOf(s); merge(); }));
+  }
+  if (canFinance()) listen("ledger", collection(db, "ledger"), s => S.ledger = docsOf(s));
+}
+
+async function login() {
+  const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt: "select_account" });
+  try { await signInWithPopup(auth, p); }
+  catch (e) {
+    if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) return signInWithRedirect(auth, p);
+    if (e && e.code === "auth/popup-closed-by-user") return;
+    toast(errMsg(e));
+  }
+}
+
+/* ================= KPI math ================= */
+function kpiActual(k) {
+  const w = k.weekly || {}; const keys = Object.keys(w).filter(x => w[x] && w[x].value !== null && w[x].value !== undefined && w[x].value !== "").sort();
+  if (!keys.length) return { v: 0, has: false };
+  if (k.mode === "latest") return { v: Number(w[keys[keys.length - 1]].value) || 0, has: true };
+  return { v: keys.reduce((a, x) => a + (Number(w[x].value) || 0), 0), has: true };
+}
+function monthElapsed(m) {
+  if (m < THISMONTH) return 1; if (m > THISMONTH) return 0;
+  return today.getDate() / new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+}
+function kpiStatus(k) {
+  const a = kpiActual(k), t = Number(k.target) || 0, rate = t > 0 ? a.v / t : 0, el = monthElapsed(k.month);
+  let st;
+  if (k.month > THISMONTH) st = { c: "plain", t: "未開始" };
+  else if (rate >= 1) st = { c: "good", t: "達成" };
+  else if (k.month < THISMONTH) st = { c: "bad", t: "未達" };
+  else if (!a.has) st = { c: "plain", t: "未報告" };
+  else if (rate >= el * 0.9) st = { c: "info", t: "順調" };
+  else st = { c: "warn", t: "遅れ" };
+  return { a, t, rate, el, st };
+}
+const viewersLabel = k => (!k.viewers || k.viewers.includes("all")) ? "全員に公開" : "公開：" + k.viewers.map(memName).join("・");
+function kpiRow(k, withEdit) {
+  const s = kpiStatus(k); const w = Math.min(100, s.rate * 100);
+  const cls = s.st.c === "good" ? "good" : (s.st.c === "warn" || s.st.c === "bad") ? "warn" : "";
+  const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
+  return `<div class="kpi">
+    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button>` : ""}</div>
+    <div class="nums"><b>${num(s.a.v)}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span></div>
+    <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
+    <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "週次の合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
+  </div>`;
+}
+
+/* ================= task helpers ================= */
+const sharedAll = t => !t.shareWith || !t.shareWith.length || t.shareWith.includes("all");
+const relevant = t => sharedAll(t) || t.owner === uid() || (t.shareWith || []).includes(uid()) || t.createdBy === uid();
+const canEditTask = t => S.isAdmin || t.createdBy === uid();
+const canToggleTask = t => canEditTask(t) || t.owner === uid();
+const taskTitle = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "（内容未記入）");
+const sortTasks = (a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || ""));
+function taskItem(t, opts = {}) {
+  const sw = sharedAll(t) ? "全員に共有" : "共有：" + t.shareWith.map(memName).join("・");
+  const late = opts.late ? `<span class="pill bad">${daysBetween(t.date, TODAY)}日遅れ</span> ` : "";
+  const sub = [opts.showDate ? md(t.date) : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
+  return `<div class="task${t.done ? " done" : ""}">
+    <div class="time">${esc(t.start || "")}${t.end ? "–" + esc(t.end) : ""}</div>
+    <div><div class="what">${late}${esc(taskTitle(t))}</div>${whoTag(t.owner)}</div>
+    <div class="acts">${canToggleTask(t) ? `<label><input type="checkbox" data-act="task-done" data-id="${esc(t.id)}" ${t.done ? "checked" : ""}>完了</label>` : (t.done ? `<span class="pill good">完了</span>` : "")}<button class="link" type="button" data-act="task-open" data-id="${esc(t.id)}">${canEditTask(t) ? "編集" : "詳細"}</button></div>
+    <div class="sub">${esc(sub)}</div>
+  </div>`;
+}
+const sumBy = (rows, type) => rows.filter(r => r.type === type).reduce((a, r) => a + (Number(r.amount) || 0), 0);
+
+/* ================= render ================= */
+function renderChrome() {
+  const tools = $("#mast-tools"), tabs = $("#tabs");
+  if (!S.user || !isActive()) {
+    tabs.innerHTML = "";
+    tools.innerHTML = S.user ? `<span class="me">${esc(S.user.email || "")}</span><button class="ghost" type="button" data-act="logout">ログアウト</button>` : "";
+    return;
+  }
+  const vis = tabsVisible(); if (!vis.some(([k]) => k === S.tab)) S.tab = "home";
+  const pending = S.isAdmin ? S.members.filter(m => m.status === "pending").length : 0;
+  tabs.innerHTML = vis.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${k === S.tab}">${l}${k === "members" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
+  tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${S.isAdmin ? "（管理者）" : ""}</span><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
+}
+function render() {
+  renderChrome();
+  const main = $("#main");
+  if (!configured) { main.innerHTML = `<div class="center"><h2>初期設定が必要です</h2><p class="muted">config.js にFirebaseの設定値を入れてください。手順は README.md にあります。</p></div>`; return; }
+  if (S.fatal) { main.innerHTML = `<div class="center"><h2>読み込めませんでした</h2><p class="muted">${esc(S.fatal)}</p></div>`; return; }
+  if (!S.user) {
+    main.innerHTML = `<div class="center"><h2>運営メンバー専用ページです</h2><p class="muted">Googleアカウントでログインしてください。はじめての方は、ログイン後に管理者の承認を受けると使えるようになります。</p>
+      <p><button class="gbtn" type="button" data-act="login"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h11.8c-.5 2.7-2 5-4.4 6.6v5.5h7.1c4.1-3.8 6.5-9.5 6.5-16.1z"/><path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.4l-7.1-5.5c-2 1.3-4.5 2.1-7.4 2.1-5.7 0-10.6-3.9-12.3-9.1H4.4v5.7C8 41 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.7 28.1c-.4-1.3-.7-2.7-.7-4.1s.3-2.8.7-4.1v-5.7H4.4C2.9 17.2 2 20.5 2 24s.9 6.8 2.4 9.8l7.3-5.7z"/><path fill="#EA4335" d="M24 10.8c3.2 0 6.1 1.1 8.4 3.3l6.3-6.3C34.9 4.2 29.9 2 24 2 15.4 2 8 7 4.4 14.2l7.3 5.7c1.7-5.2 6.6-9.1 12.3-9.1z"/></svg>Googleでログイン</button></p></div>`;
+    return;
+  }
+  if (!S.member && !S.isAdmin) { main.innerHTML = `<div class="empty"><p>アカウント情報を確認しています…</p></div>`; return; }
+  if (!isActive()) {
+    const stopped = S.member && S.member.status === "inactive";
+    main.innerHTML = `<div class="center"><h2>${stopped ? "利用が停止されています" : "承認待ちです"}</h2><p class="muted">${stopped ? "管理者に確認してください。" : `管理者（佐藤）が承認すると、このページが使えるようになります。承認されたら自動で切り替わります。`}</p><p class="muted" style="font-size:.85rem">ログイン中：${esc(S.user.email || "")}</p></div>`;
+    return;
+  }
+  if (!S.need.length || !S.need.every(k => S.ready[k])) { main.innerHTML = `<div class="empty"><p>データを読み込んでいます…</p></div>`; return; }
+  const views = { home: vHome, kpi: vKpi, cal: vCal, money: vMoney, members: vMembers, settings: vSettings };
+  const prevScroll = window.scrollY;
+  main.innerHTML = views[S.tab]();
+  window.scrollTo(0, prevScroll);
+}
+function monthNav(key) { return `<div class="monthnav"><button type="button" data-act="mprev" data-k="${key}" aria-label="前の月">‹</button><span>${monthLabel(S[key])}</span><button type="button" data-act="mnext" data-k="${key}" aria-label="次の月">›</button></div>`; }
+
+function vHome() {
+  const mine = S.tasks.filter(t => t.date === TODAY && (t.owner === uid() || sharedAll(t) || (t.shareWith || []).includes(uid()))).sort(sortTasks);
+  const myOpen = mine.filter(t => !t.done).length;
+  const overdue = S.tasks.filter(t => sharedAll(t) && !t.done && t.date < TODAY).sort(sortTasks);
+  const myLate = S.tasks.filter(t => !sharedAll(t) && t.owner === uid() && !t.done && t.date < TODAY).sort(sortTasks);
+  const ks = S.kpis.filter(k => k.month === THISMONTH).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const myKpiNoReport = ks.filter(k => k.owner === uid() && !(k.weekly || {})[THISWEEK]);
+  let fin = "";
+  if (canFinance()) {
+    const mrows = S.ledger.filter(r => (r.date || "").startsWith(THISMONTH));
+    const inc = sumBy(mrows, "収入"), exp = sumBy(mrows, "支出"), bal = sumBy(S.ledger, "収入") - sumBy(S.ledger, "支出");
+    const uns = S.ledger.filter(r => r.settled === "未精算").sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    fin = `<section class="panel"><h3>お金<button class="link hint" type="button" data-act="go" data-tab="money">収支を開く</button></h3>
+      <div class="figs" style="margin-bottom:8px"><div class="fig"><div class="k">今月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${inc - exp >= 0 ? "+" : "−"}${yen(Math.abs(inc - exp))}</div></div><div class="fig"><div class="k">現在の残高</div><div class="v">${yen(bal)}</div></div></div>
+      <div class="muted" style="font-size:.8rem;font-weight:700">未精算の立替 ${uns.length}件</div>
+      ${uns.length ? uns.map(r => `<div class="row3"><span>${md(r.date)}</span><span>${esc(r.title)}（${esc(r.owner || "")}）</span><span>${yen(r.amount)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:.85rem">ありません。</p>`}</section>`;
+  }
+  return `<div class="bar"><h2>${md(TODAY)}</h2><span class="muted">${esc(memName(uid()))}さん</span></div>
+  <div class="grid2">
+    <div class="stack">
+      <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : mine.length ? "すべて完了" : ""}</span></h3>
+        ${mine.length ? mine.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">今日の業務はありません。</p>`}
+        ${myKpiNoReport.length ? `<div class="banner" style="margin:12px 0 0">今週のKPI報告がまだです：${myKpiNoReport.map(k => esc(k.name)).join("、")} <button class="link" type="button" data-act="go" data-tab="kpi">入力する</button></div>` : ""}
+      </section>
+      <section class="panel"><h3>未対応（全体共有）<span class="hint">昨日までに完了していない業務 ${overdue.length}件</span></h3>
+        ${overdue.length ? overdue.map(t => taskItem(t, { late: true, showDate: true })).join("") : `<p class="muted" style="margin:0">未対応の業務はありません。</p>`}
+      </section>
+      ${myLate.length ? `<section class="panel"><h3>自分の未対応<span class="hint">${myLate.length}件</span></h3>${myLate.map(t => taskItem(t, { late: true, showDate: true })).join("")}</section>` : ""}
+    </div>
+    <div class="stack">
+      <section class="panel"><h3>今月のKPI<button class="link hint" type="button" data-act="go" data-tab="kpi">詳しく見る</button></h3>
+        ${ks.length ? ks.map(k => kpiRow(k, false)).join("") : `<p class="muted" style="margin:0">${S.isAdmin ? "今月のKPIはまだ設定されていません。" : "表示できる今月のKPIはありません。"}</p>`}
+      </section>
+      ${fin}
+    </div>
+  </div>`;
+}
+
+function vKpi() {
+  const m = S.kpiMonth; const ks = S.kpis.filter(k => k.month === m).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const weeks = weeksOfMonth(m); const prev = S.kpis.filter(k => k.month === shiftMonth(m, -1));
+  const head = `<div class="bar"><h2>KPI</h2>${monthNav("kpiMonth")}${S.isAdmin ? `<button class="btn" type="button" data-act="kpi-new">KPIを追加</button>` : ""}</div>`;
+  if (!ks.length) {
+    if (!S.isAdmin) return head + `<div class="empty"><p>${monthLabel(m)}に表示できるKPIはありません。</p></div>`;
+    return head + `<div class="empty"><p>${monthLabel(m)}の月次目標はまだありません。</p>
+      ${prev.length ? `<p><button class="btn sec" type="button" data-act="kpi-carry">先月のKPI（${prev.length}件）を引き継ぐ</button></p>` : ""}
+      <p class="muted" style="font-size:.85rem">よく使う指標から始める：</p>
+      <div class="tpls">${KPI_TEMPLATES.map((t, i) => `<button class="btn sec small" type="button" data-act="kpi-tpl" data-i="${i}">${esc(t.name)}</button>`).join("")}</div></div>`;
+  }
+  const rows = ks.map(k => {
+    const w = k.weekly || {}; const s = kpiStatus(k); const editable = S.isAdmin || k.owner === uid();
+    return `<tr><td><b>${esc(k.name)}</b><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}</div></td>
+      ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
+        return `<td class="num${wk === THISWEEK ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${md(wk)}の週" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
+      <td class="num"><b>${num(s.a.v)}</b> / ${num(s.t)}</td><td><span class="pill ${s.st.c}">${Math.round(s.rate * 100)}%</span></td></tr>`;
+  }).join("");
+  return head + `<div class="stack">
+    <section class="panel"><h3>月次目標の進捗<span class="hint">縦線は今日時点の目安ペース</span></h3>${ks.map(k => kpiRow(k, true)).join("")}</section>
+    <section><h3 style="font-size:.95rem;margin:0 0 8px">週次の進捗</h3>
+      <p class="muted" style="font-size:.82rem;margin:0 0 8px">各KPIの担当者が、毎週（月曜はじまり）の実績を入力します。入力すると自動で保存されます。「最新値」はその時点の数値（例：会員数）、「合計」はその週に増えた分を入れてください。</p>
+      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === THISWEEK ? " now" : ""}">${md(wk).replace(/\(.\)/, "")}〜${wk === THISWEEK ? "<br>今週" : ""}</th>`).join("")}<th class="num">実績 / 目標</th><th>達成率</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </section></div>`;
+}
+
+function vCal() {
+  const m = S.calMonth; const first = parse(m + "-01"); const start = mondayOf(first);
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  const endGrid = new Date(last); endGrid.setDate(endGrid.getDate() + (6 - (last.getDay() + 6) % 7));
+  const vis = S.onlyMine ? S.tasks.filter(t => t.owner === uid() || (t.shareWith || []).includes(uid()) || t.createdBy === uid()) : S.tasks.filter(relevant);
+  const byDay = {}; vis.forEach(t => { (byDay[t.date] = byDay[t.date] || []).push(t); });
+  let cells = ["月", "火", "水", "木", "金", "土", "日"].map(d => `<div class="dow">${d}</div>`).join("");
+  for (let d = new Date(start); d <= endGrid; d.setDate(d.getDate() + 1)) {
+    const k = ymd(d); const list = (byDay[k] || []).sort(sortTasks);
+    const cls = ["day", ym(d) !== m ? "out" : "", k === TODAY ? "today" : "", k === S.selDay ? "sel" : ""].join(" ");
+    cells += `<button type="button" class="${cls}" data-act="day" data-d="${k}" aria-label="${md(k)} 予定${list.length}件">
+      <span class="d"><span>${d.getDate()}</span></span>
+      ${list.slice(0, 3).map(t => `<span class="chip${t.done ? " done" : ""}" style="--mc:${mColor(t.owner)}">${esc(t.start || "")} ${esc(taskTitle(t))}</span>`).join("")}
+      ${list.length > 3 ? `<span class="more">ほか${list.length - 3}件</span>` : ""}
+      <span class="dots">${list.map(t => `<i style="--mc:${mColor(t.owner)}"></i>`).join("")}</span></button>`;
+  }
+  const dayList = (byDay[S.selDay] || []).sort(sortTasks);
+  return `<div class="bar"><h2>業務カレンダー</h2>
+    <label class="muted" style="font-size:.85rem;display:flex;gap:6px;align-items:center"><input type="checkbox" id="onlymine" data-act="onlymine" ${S.onlyMine ? "checked" : ""}>自分に関係する業務だけ</label>
+    ${monthNav("calMonth")}<button class="btn" type="button" data-act="task-new">業務を登録</button></div>
+  <div class="callayout">
+    <div class="stack"><div class="cal">${cells}</div>
+      <div class="legend">${activeMembers().map(m => whoTag(m.id)).join("")}</div></div>
+    <section class="panel"><h3>${md(S.selDay)}${S.selDay === TODAY ? "　今日" : ""}<button class="btn small" style="margin-left:auto" type="button" data-act="task-new" data-d="${S.selDay}">この日に登録</button></h3>
+      ${dayList.length ? dayList.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">この日の業務はありません。</p>`}
+    </section>
+  </div>`;
+}
+
+function vMoney() {
+  const m = S.moneyMonth; const rows = S.ledger.filter(r => (r.date || "").startsWith(m)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const inc = sumBy(rows, "収入"), exp = sumBy(rows, "支出");
+  const upto = S.ledger.filter(r => (r.date || "").slice(0, 7) <= m);
+  const bal = sumBy(upto, "収入") - sumBy(upto, "支出");
+  const group = type => { const o = {}; rows.filter(r => r.type === type).forEach(r => o[r.category || "その他"] = (o[r.category || "その他"] || 0) + (Number(r.amount) || 0)); return o; };
+  const cats = group("支出"), icats = group("収入");
+  const maxC = Math.max(1, ...Object.values(cats), ...Object.values(icats));
+  const bars = (o, cls) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="hbar ${cls}"><span>${esc(k)}</span><span class="track"><i style="width:${(v / maxC * 100).toFixed(1)}%"></i></span><span class="val">${yen(v)}</span></div>`).join("");
+  const stPill = s => s === "未精算" ? `<span class="pill warn">未精算</span>` : s === "精算済" ? `<span class="pill good">精算済</span>` : `<span class="pill plain">${esc(s || "対象外")}</span>`;
+  return `<div class="bar"><h2>収支</h2>${monthNav("moneyMonth")}${S.isAdmin ? `<button class="btn sec" type="button" data-act="led-import">CSVを取り込む</button><button class="btn" type="button" data-act="led-new">収支を記録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
+  <div class="figs">
+    <div class="fig"><div class="k">収入</div><div class="v pos">${yen(inc)}</div></div>
+    <div class="fig"><div class="k">支出</div><div class="v neg">${yen(exp)}</div></div>
+    <div class="fig"><div class="k">月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${inc - exp >= 0 ? "+" : "−"}${yen(Math.abs(inc - exp))}</div></div>
+    <div class="fig"><div class="k">月末時点の残高</div><div class="v">${yen(bal)}</div></div>
+  </div>
+  <div class="stack">
+    ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>日付</th><th>項目</th><th>区分</th><th>カテゴリ</th><th class="num">金額</th><th>担当者</th><th>支払方法</th><th>精算</th></tr></thead><tbody>
+      ${rows.map(r => `<tr class="${S.isAdmin ? "click" : ""}" ${S.isAdmin ? `data-act="led-edit" data-id="${esc(r.id)}" tabindex="0"` : ""}><td>${md(r.date)}</td><td style="white-space:normal;min-width:12em">${esc(r.title)}${r.memo ? `<div class="muted" style="font-size:.75rem">${esc(r.memo)}</div>` : ""}</td><td><span class="pill ${r.type === "収入" ? "good" : "bad"}">${esc(r.type)}</span></td><td>${esc(r.category || "")}</td><td class="num ${r.type === "収入" ? "pos" : "neg"}">${r.type === "収入" ? "+" : "−"}${yen(r.amount)}</td><td>${esc(r.owner || "")}</td><td>${esc(r.method || "")}</td><td>${stPill(r.settled)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="empty"><p>${monthLabel(m)}の記録はありません。</p>${S.isAdmin ? `<button class="btn small" type="button" data-act="led-new">記録を追加</button>` : ""}</div>`}
+    ${rows.length ? `<div class="grid2"><section class="panel"><h3>支出の内訳</h3>${Object.keys(cats).length ? bars(cats, "out") : `<p class="muted" style="margin:0">支出はありません。</p>`}</section>
+      <section class="panel"><h3>収入の内訳</h3>${Object.keys(icats).length ? bars(icats, "") : `<p class="muted" style="margin:0">収入はありません。</p>`}</section></div>` : ""}
+  </div>`;
+}
+
+function vMembers() {
+  const list = [...S.members].sort((a, b) => ({ pending: 0, active: 1, inactive: 2 }[a.status] ?? 3) - ({ pending: 0, active: 1, inactive: 2 }[b.status] ?? 3) || (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+  const st = s => s === "active" ? `<span class="pill good">利用中</span>` : s === "pending" ? `<span class="pill warn">承認待ち</span>` : `<span class="pill plain">停止中</span>`;
+  return `<div class="bar"><h2>メンバー</h2></div>
+  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">運営メンバーにはこのページのURLを送り、Googleでログインしてもらってください。ログインした人がここに「承認待ち」で表示されるので、本人であることを確認してから承認します。表示名はカレンダーやKPIに出る名前です。</p>
+  <div class="tablewrap"><table><thead><tr><th>表示名</th><th>Googleアカウント</th><th>状態</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
+  ${list.map(m => { const self = m.id === uid(); return `<tr>
+    <td><input class="name-in" id="mn-${esc(m.id)}" value="${esc(m.name || "")}" data-act="mem-name" data-id="${esc(m.id)}" aria-label="表示名"></td>
+    <td>${esc(m.email || "")}</td><td>${st(m.status)}</td>
+    <td>${self ? `<span class="muted">管理者</span>` : `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mf-${esc(m.id)}" data-act="mem-fin" data-id="${esc(m.id)}" ${m.finance ? "checked" : ""}>見られる</label>`}</td>
+    <td>${self ? "" : m.status === "pending" ? `<button class="btn small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">承認する</button> <button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">拒否</button>` : m.status === "active" ? `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">利用停止</button>` : `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">再開する</button>`}</td></tr>`; }).join("")}
+  </tbody></table></div>
+  <p class="muted" style="font-size:.8rem;margin-top:10px">収支を見られる人は、収支の閲覧のみできます（編集は管理者だけ）。</p>`;
+}
+
+function vSettings() {
+  const c = cfg();
+  const list = (key, items, label) => `<section class="panel"><h3>${label}</h3><div class="listedit" data-list="${key}">${items.map((x, i) => `<div class="row"><input id="s-${key}-${i}" value="${esc(x)}" aria-label="${label}${i + 1}"><button class="btn sec small" type="button" data-rm>外す</button></div>`).join("")}</div><button class="link" type="button" data-add="${key}" style="margin-top:8px">＋ 追加</button></section>`;
+  return `<div class="bar"><h2>設定</h2><button class="btn" type="button" data-act="save-settings">保存</button></div>
+    <div class="grid2">${list("routines", c.routines, "定例業務（業務登録の選択肢）")}${list("expenseCats", c.expenseCats, "支出カテゴリ")}${list("incomeCats", c.incomeCats, "収入カテゴリ")}${list("methods", c.methods, "支払方法")}</div>`;
+}
+
+/* ================= dialogs ================= */
+const dlg = $("#dlg"), form = $("#dlg-form"); let onSubmit = null, onDelete = null;
+function openDlg(title, body, { submit, del, readOnly } = {}) {
+  form.innerHTML = `<div class="dlg-h"><h3>${esc(title)}</h3><button type="button" data-close aria-label="閉じる">×</button></div>
+    <div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
+    <div class="dlg-f">${del ? `<button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button>` : ""}<div class="sp">${readOnly ? `<button class="btn" type="button" data-close>閉じる</button>` : `<button class="btn sec" type="button" data-close>キャンセル</button><button class="btn" type="submit">保存</button>`}</div></div>`;
+  onSubmit = submit; onDelete = del;
+  try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); }
+  const f = form.querySelector("input:not([type=checkbox]),select,textarea"); if (f && !readOnly) f.focus();
+}
+function closeDlg() { try { dlg.close(); } catch (e) { dlg.removeAttribute("open"); } }
+function showErr(err) { const p = $("#f-err"); p.hidden = false; p.textContent = typeof err === "string" ? err : errMsg(err); }
+form.addEventListener("click", e => {
+  if (e.target.closest("[data-close]")) { closeDlg(); return; }
+  const d = e.target.closest("#f-del");
+  if (d) {
+    if (d.dataset.armed) Promise.resolve(onDelete()).then(() => { closeDlg(); toast("削除しました"); }).catch(showErr);
+    else { d.dataset.armed = "1"; d.textContent = "本当に削除する"; d.classList.remove("sec"); d.classList.add("danger"); d.style.color = ""; }
+  }
+});
+form.addEventListener("submit", async e => {
+  e.preventDefault(); if (!onSubmit) return;
+  const fd = new FormData(form); const f = Object.fromEntries(fd.entries()); f.__fd = fd;
+  const btn = form.querySelector("[type=submit]"); if (btn) btn.disabled = true;
+  try { const r = await onSubmit(f); if (r !== false) { closeDlg(); toast("保存しました"); } }
+  catch (err) { showErr(err); }
+  finally { if (btn) btn.disabled = false; }
+});
+const sel = (name, list, val) => `<select name="${name}" id="f-${name}">${list.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
+const fld = (label, inner, { full, req, help } = {}) => `<div class="field${full ? " full" : ""}"><span class="lbl">${esc(label)}${req ? `<span class="req">必須</span>` : ""}</span>${inner}${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
+const memberOpts = () => activeMembers().map(m => [m.id, m.name || m.email]);
+function shareBox(name, current, help) {
+  const all = !current || !current.length || current.includes("all");
+  return `<div class="field full"><span class="lbl">${name === "viewers" ? "表示できる人" : "共有する人"}</span><div class="checks">
+    <label><input type="checkbox" name="${name}_all" id="f-${name}_all" ${all ? "checked" : ""}>全員</label>
+    ${activeMembers().map((m, i) => `<label><input type="checkbox" name="${name}" id="f-${name}-${i}" value="${esc(m.id)}" ${!all && current.includes(m.id) ? "checked" : ""} ${all ? "disabled" : ""}>${esc(m.name || m.email)}</label>`).join("")}
+  </div>${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
+}
+function wireShare(name) {
+  const a = form.querySelector(`#f-${name}_all`); if (!a) return;
+  a.addEventListener("change", () => form.querySelectorAll(`input[name=${name}]`).forEach(x => { x.disabled = a.checked; if (a.checked) x.checked = false; }));
+}
+const readShare = (f, name) => { if (f[name + "_all"]) return ["all"]; const v = f.__fd.getAll(name); return v.length ? v : ["all"]; };
+
+function kpiDialog(k, preset) {
+  const v = k || Object.assign({ month: S.kpiMonth, mode: "sum", unit: "人", owner: uid(), viewers: ["all"] }, preset || {});
+  const body = fld("指標名", `<input name="name" id="f-name" required value="${esc(v.name || "")}" placeholder="例：体験参加者数">`, { full: true, req: true }) +
+    fld("月次目標", `<input name="target" id="f-target" type="number" step="any" min="0" required value="${esc(v.target ?? "")}">`, { req: true }) +
+    fld("単位", `<input name="unit" id="f-unit" value="${esc(v.unit || "")}" placeholder="人・回・件">`) +
+    fld("集計方法", sel("mode", [["sum", "週次の合計（増えた分を毎週入力）"], ["latest", "最新値（その時点の数値を毎週入力）"]], v.mode), { full: true }) +
+    fld("担当者", sel("owner", memberOpts(), v.owner), { help: "週次の進捗を入力する人" }) +
+    fld("対象月", `<input name="month" id="f-month" type="month" required value="${esc(v.month)}">`, { req: true }) +
+    shareBox("viewers", v.viewers, "担当者には常に表示されます。表示できない人には、このKPIのデータ自体が送られません。");
+  openDlg(k ? "KPIを編集" : "KPIを追加", body, {
+    submit: async f => {
+      const data = { name: f.name.trim(), target: Number(f.target), unit: f.unit.trim(), mode: f.mode, owner: f.owner, month: f.month, viewers: readShare(f, "viewers") };
+      if (!data.name) return showErr("指標名を入力してください。"), false;
+      if (!data.viewers.includes("all") && !data.viewers.includes(data.owner)) data.viewers.push(data.owner);
+      if (k) await updateDoc(doc(db, "kpis", k.id), data);
+      else { data.weekly = {}; data.order = Date.now(); data.createdAt = serverTimestamp(); await addDoc(collection(db, "kpis"), data); }
+    },
+    del: k ? () => deleteDoc(doc(db, "kpis", k.id)) : null
+  });
+  wireShare("viewers");
+}
+
+function taskDialog(t, date) {
+  const c = cfg();
+  if (t && !canEditTask(t)) {
+    const sw = sharedAll(t) ? "全員" : t.shareWith.map(memName).join("・");
+    openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${esc(t.start || "")}${t.end ? "–" + esc(t.end) : ""}</div>`) + fld("担当者", `<div class="ro">${esc(memName(t.owner))}</div>`) +
+      fld("担当業務", `<div class="ro">${esc(taskTitle(t))}</div>`, { full: true }) + (t.detail && t.routine !== "__other" ? fld("内容・メモ", `<div class="ro">${esc(t.detail)}</div>`, { full: true }) : "") +
+      fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者です" }), { readOnly: true });
+    return;
+  }
+  const v = t || { date: date || S.selDay || TODAY, start: "17:30", end: "19:00", owner: uid(), routine: c.routines[0], detail: "", shareWith: ["all"] };
+  const isOther = v.routine === "__other" || (v.routine && !c.routines.includes(v.routine));
+  const routineOpts = [...c.routines.map(r => [r, r]), ...(isOther && v.routine !== "__other" ? [[v.routine, v.routine]] : []), ["__other", "その他（下に記述）"]];
+  const body = fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true }) +
+    fld("担当者", sel("owner", memberOpts(), v.owner)) +
+    fld("開始", `<input type="time" name="start" id="f-start" required value="${esc(v.start || "")}">`, { req: true }) +
+    fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "空欄なら開始の1時間後" }) +
+    fld("担当業務", sel("routine", routineOpts, v.routine === "__other" ? "__other" : v.routine), { full: true }) +
+    fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true }) +
+    shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。");
+  openDlg(t ? "業務を編集" : "業務を登録", body, {
+    submit: async f => {
+      let end = f.end; if (!end && f.start) { const [hh, mm] = f.start.split(":").map(Number); end = pad(Math.min(23, hh + 1)) + ":" + pad(mm); }
+      if (f.routine === "__other" && !f.detail.trim()) return showErr("「その他」を選んだときは内容を記述してください。"), false;
+      if (end && f.start && end < f.start) return showErr("終了時刻が開始時刻より前になっています。"), false;
+      const data = { date: f.date, start: f.start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
+      if (t) await updateDoc(doc(db, "tasks", t.id), data);
+      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "tasks"), data); }
+      S.selDay = f.date; S.calMonth = f.date.slice(0, 7);
+    },
+    del: t ? () => deleteDoc(doc(db, "tasks", t.id)) : null
+  });
+  wireShare("share");
+}
+
+function ledDialog(r) {
+  const c = cfg(); const names = activeMembers().map(m => m.name || m.email);
+  const v = r || { date: TODAY, type: "支出", category: c.expenseCats[0], owner: memName(uid()), method: "現金", settled: "未精算", title: "", amount: "", memo: "" };
+  const ownerList = v.owner && !names.includes(v.owner) ? [...names, v.owner] : names;
+  const catList = t => t === "収入" ? c.incomeCats : c.expenseCats;
+  const body = fld("項目", `<input name="title" id="f-title" required value="${esc(v.title)}" placeholder="例：チラシ印刷代">`, { full: true, req: true }) +
+    fld("区分", sel("type", ["収入", "支出"], v.type)) + fld("カテゴリ", sel("category", catList(v.type), v.category)) +
+    fld("金額（円）", `<input name="amount" id="f-amount" type="number" min="0" step="1" required value="${esc(v.amount)}">`, { req: true }) +
+    fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true }) +
+    fld("担当者", sel("owner", ownerList, v.owner)) + fld("支払方法", sel("method", c.methods, v.method)) +
+    fld("精算", sel("settled", ["未精算", "精算済", "対象外"], v.settled), { help: "立替払いは「未精算」、返金したら「精算済」" }) +
+    fld("メモ", `<textarea name="memo" id="f-memo">${esc(v.memo || "")}</textarea>`, { full: true });
+  openDlg(r ? "収支を編集" : "収支を記録", body, {
+    submit: async f => {
+      const amt = Number(f.amount); if (!(amt >= 0)) return showErr("金額を数字で入力してください。"), false;
+      const data = { title: f.title.trim(), type: f.type, category: f.category, amount: amt, date: f.date, owner: f.owner, method: f.method, settled: f.settled, memo: f.memo.trim() };
+      if (r) await updateDoc(doc(db, "ledger", r.id), data);
+      else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "ledger"), data); }
+      S.moneyMonth = f.date.slice(0, 7);
+    },
+    del: r ? () => deleteDoc(doc(db, "ledger", r.id)) : null
+  });
+  const ty = form.querySelector("#f-type"), ca = form.querySelector("#f-category");
+  ty.addEventListener("change", () => { ca.innerHTML = catList(ty.value).map(o => `<option>${esc(o)}</option>`).join(""); });
+}
+
+/* CSV import (Notionの書き出しと同じ列名：項目,区分,カテゴリ,金額,日付,担当者,支払方法,精算,メモ) */
+function parseCSV(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  text = text.replace(/^﻿/, "");
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cur); cur = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += ch;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => r.some(x => x.trim() !== ""));
+}
+function normDate(s) {
+  s = (s || "").trim(); let m;
+  if ((m = s.match(/^(\d{4})[-\/年.](\d{1,2})[-\/月.](\d{1,2})/))) return m[1] + "-" + pad(m[2]) + "-" + pad(m[3]);
+  const d = new Date(s); return isNaN(d) ? "" : ymd(d);
+}
+function importDialog() {
+  openDlg("CSVを取り込む", fld("CSVファイル", `<input type="file" id="f-csv" name="csv" accept=".csv,text/csv" required>`, { full: true, help: "1行目の列名：項目, 区分, カテゴリ, 金額, 日付, 担当者, 支払方法, 精算, メモ（NotionのCSV書き出しをそのまま使えます）" }) + `<p class="muted full" id="f-prev" style="grid-column:1/-1;margin:0;font-size:.85rem"></p>`, {
+    submit: async () => {
+      const file = form.querySelector("#f-csv").files[0]; if (!file) return showErr("ファイルを選んでください。"), false;
+      const rows = parseCSV(await file.text()); if (rows.length < 2) return showErr("データ行がありません。"), false;
+      const h = rows[0].map(x => x.trim()); const ix = n => h.indexOf(n);
+      if (ix("項目") < 0 || ix("金額") < 0 || ix("日付") < 0 || ix("区分") < 0) return showErr("「項目」「区分」「金額」「日付」の列が見つかりません。"), false;
+      const items = rows.slice(1).map(r => {
+        const g = n => ix(n) < 0 ? "" : (r[ix(n)] || "").trim();
+        return { title: g("項目"), type: g("区分") === "収入" ? "収入" : "支出", category: g("カテゴリ") || "その他", amount: Number(g("金額").replace(/[¥￥,円\s]/g, "")) || 0, date: normDate(g("日付")), owner: g("担当者"), method: g("支払方法"), settled: g("精算") || "対象外", memo: g("メモ"), createdAt: serverTimestamp() };
+      }).filter(x => x.title && x.date);
+      if (!items.length) return showErr("取り込める行がありませんでした。日付の形式を確認してください。"), false;
+      for (let i = 0; i < items.length; i += 400) { const b = writeBatch(db); items.slice(i, i + 400).forEach(x => b.set(doc(collection(db, "ledger")), x)); await b.commit(); }
+      toast(items.length + "件を取り込みました");
+    }
+  });
+}
+
+/* ================= events ================= */
+document.addEventListener("click", async e => {
+  const tab = e.target.closest("#tabs [data-tab]"); if (tab) { S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } render(); window.scrollTo(0, 0); return; }
+  const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) {
+    const rm = e.target.closest("[data-rm]"); if (rm && !rm.closest("dialog")) { rm.parentElement.remove(); return; }
+    const ad = e.target.closest("[data-add]"); if (ad && !ad.closest("dialog")) { const box = document.querySelector(`[data-list="${ad.dataset.add}"]`); box.insertAdjacentHTML("beforeend", `<div class="row"><input id="s-${ad.dataset.add}-${Date.now()}" value="" aria-label="追加項目"><button class="btn sec small" type="button" data-rm>外す</button></div>`); box.lastElementChild.querySelector("input").focus(); }
+    return;
+  }
+  const act = a.dataset.act, id = a.dataset.id;
+  if (act === "login") return login();
+  if (act === "logout") { await signOut(auth); return; }
+  if (act === "go") { S.tab = a.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  if (act === "mprev" || act === "mnext") { const k = a.dataset.k; S[k] = shiftMonth(S[k], act === "mprev" ? -1 : 1); if (k === "calMonth") S.selDay = S.calMonth === THISMONTH ? TODAY : S.calMonth + "-01"; render(); return; }
+  if (act === "kpi-new") return kpiDialog(null);
+  if (act === "kpi-tpl") return kpiDialog(null, KPI_TEMPLATES[+a.dataset.i]);
+  if (act === "kpi-edit") return kpiDialog(S.kpis.find(k => k.id === id));
+  if (act === "kpi-carry") {
+    const prev = S.kpis.filter(k => k.month === shiftMonth(S.kpiMonth, -1));
+    try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, target: k.target, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err)); }
+    return;
+  }
+  if (act === "task-new") return taskDialog(null, a.dataset.d);
+  if (act === "task-open") return taskDialog(S.tasks.find(t => t.id === id));
+  if (act === "day") { S.selDay = a.dataset.d; render(); return; }
+  if (act === "led-new") return ledDialog(null);
+  if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
+  if (act === "led-import") return importDialog();
+  if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err)); } return; }
+  if (act === "save-settings") {
+    const out = {}; ["routines", "expenseCats", "incomeCats", "methods"].forEach(k => { out[k] = [...document.querySelectorAll(`[data-list="${k}"] input`)].map(i => i.value.trim()).filter(Boolean); });
+    try { await setDoc(doc(db, "config", "main"), out); toast("設定を保存しました"); } catch (err) { toast(errMsg(err)); }
+  }
+});
+document.addEventListener("keydown", e => { if (e.key === "Enter") { const r = e.target.closest && e.target.closest("tr[data-act=led-edit]"); if (r) ledDialog(S.ledger.find(x => x.id === r.dataset.id)); } });
+document.addEventListener("change", async e => {
+  const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) return;
+  const act = a.dataset.act, id = a.dataset.id;
+  if (act === "onlymine") { S.onlyMine = a.checked; ls.set("cb_onlymine", a.checked ? "1" : "0"); render(); return; }
+  try {
+    if (act === "task-done") await updateDoc(doc(db, "tasks", id), { done: a.checked });
+    if (act === "kpi-cell") { const raw = a.value.trim(); await updateDoc(doc(db, "kpis", id), new FieldPath("weekly", a.dataset.wk), { value: raw === "" ? null : Number(raw), by: uid() }); toast("保存しました"); }
+    if (act === "mem-name") { await updateDoc(doc(db, "members", id), { name: a.value.trim() }); toast("表示名を保存しました"); }
+    if (act === "mem-fin") { await updateDoc(doc(db, "members", id), { finance: a.checked }); toast(a.checked ? "収支を見られるようにしました" : "収支を見られないようにしました"); }
+  } catch (err) { if (a.type === "checkbox") a.checked = !a.checked; toast(errMsg(err)); }
+});
+
+const h0 = (location.hash || "").slice(1); if (TABS_ALL.some(([k]) => k === h0)) S.tab = h0;
+render();
