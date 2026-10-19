@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, FieldPath, serverTimestamp, arrayUnion } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getMessaging, getToken, deleteToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js";
 import { firebaseConfig, ADMIN_EMAILS } from "./config.js";
 
 /* ================= utilities ================= */
@@ -38,10 +39,10 @@ function errMsg(e) {
 
 /* ================= firebase ================= */
 const configured = !!firebaseConfig.apiKey && !!firebaseConfig.projectId;
-let auth, db;
+let auth, db, fbApp;
 if (configured) {
   const app = initializeApp(firebaseConfig);
-  auth = getAuth(app); db = getFirestore(app);
+  auth = getAuth(app); db = getFirestore(app); fbApp = app;
 }
 
 const DEFAULTS = {
@@ -117,6 +118,7 @@ function listen(key, ref, fn) {
 }
 const docsOf = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
 function startData() {
+  if (notifyOn()) setTimeout(bindForeground, 0);
   listen("members", collection(db, "members"), s => S.members = docsOf(s));
   listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
   listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
@@ -209,7 +211,7 @@ function renderChrome() {
   const vis = tabsVisible(); if (!vis.some(([k]) => k === S.tab)) S.tab = "home";
   const pending = S.isAdmin ? S.members.filter(m => m.status === "pending").length : 0;
   tabs.innerHTML = vis.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${k === S.tab}">${l}${k === "members" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
-  tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${S.isAdmin ? "（管理者）" : ""}</span><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
+  tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${S.isAdmin ? "（管理者）" : ""}</span><button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
 }
 function render() {
   renderChrome();
@@ -397,12 +399,67 @@ function vMembers() {
 
 const rowHTML = (key, i, x, label) => `<div class="row"><button type="button" class="handle" aria-label="並べ替え（↑↓キーで移動）" title="ドラッグして並べ替え"><svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true" fill="currentColor"><circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg></button><input id="s-${key}-${i}" value="${esc(x)}" aria-label="${esc(label || "項目")}"><button class="btn sec small" type="button" data-rm>外す</button></div>`;
 function markDirty() { S.settingsDirty = true; const h = document.getElementById("save-hint"); if (h) h.hidden = false; }
+function notifyTimeSelect(cur) {
+  const opts = []; for (let h = 5; h <= 10; h++) for (const m of [0, 15, 30, 45]) opts.push(pad(h) + ":" + pad(m));
+  return `<select id="s-notifyTime">${opts.map(o => `<option ${o === cur ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+}
 function vSettings() {
   const c = cfg();
   const list = (key, items, label) => `<section class="panel"><h3>${label}</h3><div class="listedit" data-list="${key}">${items.map((x, i) => rowHTML(key, i, x, label)).join("")}</div><button class="link" type="button" data-add="${key}" style="margin-top:8px">＋ 追加</button></section>`;
   return `<div class="bar"><h2>設定</h2><span class="pill warn" id="save-hint" ${S.settingsDirty ? "" : "hidden"}>未保存の変更があります</span><button class="btn" type="button" data-act="save-settings">保存</button></div>
     <p class="muted" style="font-size:.82rem;margin:-8px 0 14px">左の点のつまみをドラッグすると並び順を変えられます（キーボードではつまみを選んで↑↓キー）。この順番で業務登録や収支の選択肢に表示されます。</p>
+    <section class="panel" style="margin-bottom:16px"><h3>朝の通知</h3>
+      <div class="dlg-b" style="padding:0">
+        <div class="field"><label class="checks" style="font-size:.9rem"><input type="checkbox" id="s-notifyEnabled" ${c.notifyEnabled === false ? "" : "checked"}>担当業務がある日の朝に通知を送る</label></div>
+        <div class="field"><span class="lbl">送る時間</span>${notifyTimeSelect(c.notifyTime || "07:30")}<span class="help">実際に届くのは、この時刻から15分ほど遅れることがあります</span></div>
+        <div class="field full"><span class="lbl">ウェブプッシュ証明書の鍵（初回のみ）</span><input id="s-vapid" value="${esc(c.vapidKey || "")}" placeholder="Firebase →プロジェクトの設定 → Cloud Messaging →ウェブプッシュ証明書の「鍵ペア」"><span class="help">${c.vapidKey ? "設定済みです" : "未設定です。設定するまでメンバーは通知を受け取る登録ができません"}</span></div>
+      </div></section>
     <div class="grid2">${list("routines", c.routines, "定例業務（業務登録の選択肢）")}${list("expenseCats", c.expenseCats, "支出カテゴリ")}${list("incomeCats", c.incomeCats, "収入カテゴリ")}${list("methods", c.methods, "支払方法")}</div>`;
+}
+
+/* ================= push notifications ================= */
+const notifyOn = () => !!memGet("push_token_id") && (typeof Notification !== "undefined" && Notification.permission === "granted");
+const isStandalone = () => (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+async function sha256(t) { const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)); return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("").slice(0, 40); }
+let fgBound = false;
+async function swReg() { return navigator.serviceWorker.register("firebase-messaging-sw.js", { scope: "./" }); }
+async function enablePush() {
+  const c = cfg(); if (!c.vapidKey) throw new Error("管理者が通知の初期設定（ウェブプッシュ証明書の鍵）をまだ入れていません。");
+  if (!(await isSupported())) throw new Error(isIOS() && !isStandalone() ? "iPhoneでは、ホーム画面に追加したアプリから開いて登録してください。" : "このブラウザは通知に対応していません。");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("通知が許可されませんでした。端末の設定で、このアプリの通知を許可してください。");
+  const reg = await swReg(); await navigator.serviceWorker.ready;
+  const token = await getToken(getMessaging(fbApp), { vapidKey: c.vapidKey, serviceWorkerRegistration: reg });
+  if (!token) throw new Error("通知の登録に失敗しました。もう一度試してください。");
+  const id = await sha256(token);
+  await setDoc(doc(db, "members", uid(), "tokens", id), { token, ua: navigator.userAgent.slice(0, 200), standalone: isStandalone(), createdAt: serverTimestamp() });
+  memSet("push_token_id", id); bindForeground();
+}
+async function disablePush() {
+  const id = memGet("push_token_id");
+  try { await deleteToken(getMessaging(fbApp)); } catch (e) { }
+  if (id) { try { await deleteDoc(doc(db, "members", uid(), "tokens", id)); } catch (e) { } }
+  memSet("push_token_id", null);
+}
+function bindForeground() {
+  if (fgBound || !fbApp) return; fgBound = true;
+  try { onMessage(getMessaging(fbApp), p => { const n = p.notification || {}; toast((n.title ? n.title + "：" : "") + (n.body || "")); }); } catch (e) { }
+}
+function notifyDialog() {
+  const c = cfg(); const on = notifyOn();
+  const perm = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+  const iosNote = isIOS() && !isStandalone() ? `<p class="banner" style="grid-column:1/-1;margin:0">iPhoneで通知を受け取るには、Safariの共有ボタン →「ホーム画面に追加」で追加したアプリから開いて、ここで登録してください。</p>` : "";
+  const body = iosNote + `<div class="field full"><span class="lbl">この端末の状態</span><div class="ro">${on ? `<span class="pill good">通知を受け取ります</span>` : perm === "denied" ? `<span class="pill bad">通知がブロックされています</span>` : `<span class="pill plain">受け取っていません</span>`}</div>
+    <span class="help">${c.notifyEnabled === false ? "現在、管理者が朝の通知を止めています。" : `自分が担当の業務がある日の朝${esc(c.notifyTime || "07:30")}ごろに届きます。`}端末ごとに登録が必要です（スマホとPCの両方で受け取るなら両方で登録）。</span>
+    ${perm === "denied" ? `<span class="help">端末の設定（iPhoneは「設定」→「通知」→「運営ボード」）で許可してから、もう一度押してください。</span>` : ""}</div>`;
+  form.innerHTML = `<div class="dlg-h"><h3>朝の通知</h3><button type="button" data-close aria-label="閉じる">×</button></div><div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
+    <div class="dlg-f"><div class="sp">${on ? `<button class="btn sec" type="button" id="n-off">この端末で受け取らない</button>` : `<button class="btn" type="button" id="n-on">この端末で受け取る</button>`}</div></div>`;
+  onSubmit = null; onDelete = null; draftKey = null;
+  try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); }
+  const onB = form.querySelector("#n-on"), offB = form.querySelector("#n-off");
+  if (onB) onB.addEventListener("click", async () => { onB.disabled = true; onB.textContent = "登録しています…"; try { await enablePush(); closeDlg(); toast("この端末で通知を受け取ります"); render(); } catch (e) { showErr(e.message || errMsg(e)); onB.disabled = false; onB.textContent = "この端末で受け取る"; } });
+  if (offB) offB.addEventListener("click", async () => { offB.disabled = true; await disablePush(); closeDlg(); toast("この端末への通知を止めました"); render(); });
 }
 
 /* ================= dialogs ================= */
@@ -633,7 +690,8 @@ document.addEventListener("click", async e => {
   }
   const act = a.dataset.act, id = a.dataset.id;
   if (act === "login") return login();
-  if (act === "logout") { await signOut(auth); return; }
+  if (act === "logout") { if (notifyOn()) await disablePush(); await signOut(auth); return; }
+  if (act === "notify") return notifyDialog();
   if (act === "go") { S.tab = a.dataset.tab; render(); window.scrollTo(0, 0); return; }
   if (act === "mprev" || act === "mnext") { const k = a.dataset.k; S[k] = shiftMonth(S[k], act === "mprev" ? -1 : 1); if (k === "calMonth") S.selDay = S.calMonth === THISMONTH ? TODAY : S.calMonth + "-01"; render(); return; }
   if (act === "kpi-new") return kpiDialog(null);
@@ -658,7 +716,9 @@ document.addEventListener("click", async e => {
   if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err)); } return; }
   if (act === "save-settings") {
     const out = {}; ["routines", "expenseCats", "incomeCats", "methods"].forEach(k => { out[k] = [...document.querySelectorAll(`[data-list="${k}"] input`)].map(i => i.value.trim()).filter(Boolean); });
-    try { await setDoc(doc(db, "config", "main"), out); S.settingsDirty = false; toast("設定を保存しました"); render(); } catch (err) { toast(errMsg(err)); }
+    const nt = document.getElementById("s-notifyTime"), ne = document.getElementById("s-notifyEnabled"), vk = document.getElementById("s-vapid");
+    if (nt) out.notifyTime = nt.value; if (ne) out.notifyEnabled = ne.checked; if (vk) out.vapidKey = vk.value.trim();
+    try { await setDoc(doc(db, "config", "main"), out, { merge: true }); S.settingsDirty = false; toast("設定を保存しました"); render(); } catch (err) { toast(errMsg(err)); }
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Enter") { const r = e.target.closest && e.target.closest("tr[data-act=led-edit]"); if (r) ledDialog(S.ledger.find(x => x.id === r.dataset.id)); } });
@@ -675,7 +735,8 @@ document.addEventListener("change", async e => {
 });
 
 /* ---------- 並べ替え（ドラッグ＆ドロップ・タッチ・キーボード対応） ---------- */
-document.addEventListener("input", e => { if (e.target.closest("[data-list]")) markDirty(); });
+document.addEventListener("input", e => { if (e.target.closest("[data-list]") || /^s-(notify|vapid)/.test(e.target.id || "")) markDirty(); });
+document.addEventListener("change", e => { if (/^s-notify/.test(e.target.id || "")) markDirty(); });
 document.addEventListener("pointerdown", e => {
   const handle = e.target.closest(".listedit .handle"); if (!handle || e.button > 0) return;
   e.preventDefault();
