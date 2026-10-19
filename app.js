@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, FieldPath, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, collection, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, FieldPath, serverTimestamp, arrayUnion } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { firebaseConfig, ADMIN_EMAILS } from "./config.js";
 
 /* ================= utilities ================= */
@@ -50,14 +50,15 @@ const DEFAULTS = {
   expenseCats: ["会場費", "広告・宣伝費", "メンター謝礼", "飲食費", "ツール・サブスク", "その他"],
   methods: ["現金", "PayPay", "銀行振込", "クレジット"]
 };
-const KPI_TEMPLATES = [
-  { name: "登録会員数", unit: "人", mode: "latest" },
-  { name: "新規入会者数", unit: "人", mode: "sum" },
-  { name: "体験参加者数", unit: "人", mode: "sum" },
-  { name: "活動参加者数（延べ）", unit: "人", mode: "sum" },
-  { name: "インスタフォロワー数", unit: "人", mode: "latest" },
-  { name: "イベント開催数", unit: "回", mode: "sum" }
+// 毎月デフォルトで用意するKPI（管理者がその月を初めて開いたときに自動で追加）
+const DEFAULT_KPIS = [
+  { key: "ig-follow", name: "インスタフォロー営業数", unit: "件", mode: "sum" },
+  { key: "ig-followers", name: "インスタフォロワー数", unit: "人", mode: "latest" },
+  { key: "line-reach", name: "公式LINEリーチ数", unit: "人", mode: "latest" },
+  { key: "trial", name: "体験参加者数", unit: "人", mode: "sum" },
+  { key: "join", name: "入会者数", unit: "人", mode: "sum" }
 ];
+const KPI_TEMPLATES = DEFAULT_KPIS;
 
 const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["money", "収支"], ["members", "メンバー"], ["settings", "設定"]];
 const S = {
@@ -154,7 +155,8 @@ function monthElapsed(m) {
 function kpiStatus(k) {
   const a = kpiActual(k), t = Number(k.target) || 0, rate = t > 0 ? a.v / t : 0, el = monthElapsed(k.month);
   let st;
-  if (k.month > THISMONTH) st = { c: "plain", t: "未開始" };
+  if (!(t > 0)) st = { c: "plain", t: "目標未設定" };
+  else if (k.month > THISMONTH) st = { c: "plain", t: "未開始" };
   else if (rate >= 1) st = { c: "good", t: "達成" };
   else if (k.month < THISMONTH) st = { c: "bad", t: "未達" };
   else if (!a.has) st = { c: "plain", t: "未報告" };
@@ -169,7 +171,7 @@ function kpiRow(k, withEdit) {
   const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
   return `<div class="kpi">
     <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button>` : ""}</div>
-    <div class="nums"><b>${num(s.a.v)}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span></div>
+    <div class="nums">${s.t > 0 ? `<b>${num(s.a.v)}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
     <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTGごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
   </div>`;
@@ -229,7 +231,29 @@ function render() {
   if (S.tab === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
   main.innerHTML = views[S.tab]();
+  if (S.isAdmin) { setTimeout(() => { seedMonth(THISMONTH); if (S.tab === "kpi") seedMonth(S.kpiMonth); }, 0); }
   window.scrollTo(0, prevScroll);
+}
+const seeding = new Set();
+async function seedMonth(m) {
+  if (!S.isAdmin || m < THISMONTH || seeding.has(m)) return;
+  const seeded = (S.config && S.config.kpiSeeded) || [];
+  if (seeded.includes(m)) return;
+  seeding.add(m);
+  const cur = S.kpis.filter(k => k.month === m), prev = S.kpis.filter(k => k.month === shiftMonth(m, -1));
+  const b = writeBatch(db); let n = 0;
+  DEFAULT_KPIS.forEach((d, i) => {
+    if (cur.some(k => k.name === d.name)) return;
+    const p = prev.find(k => k.name === d.name);
+    b.set(doc(db, "kpis", m + "-" + d.key), { name: d.name, unit: d.unit, mode: d.mode, target: p ? p.target : null, owner: p ? p.owner : uid(), viewers: p ? (p.viewers || ["all"]) : ["all"], month: m, weekly: {}, order: i + 1, createdAt: serverTimestamp() }); n++;
+  });
+  // 空の月なら、先月に追加していた独自のKPIも目標ごと引き継ぐ
+  if (!cur.length) prev.filter(k => !DEFAULT_KPIS.some(d => d.name === k.name)).forEach((k, i) => {
+    b.set(doc(collection(db, "kpis")), { name: k.name, unit: k.unit || "", mode: k.mode, target: k.target ?? null, owner: k.owner, viewers: k.viewers || ["all"], month: m, weekly: {}, order: 100 + i, createdAt: serverTimestamp() }); n++;
+  });
+  b.set(doc(db, "config", "main"), { kpiSeeded: arrayUnion(m) }, { merge: true });
+  try { await b.commit(); if (n) toast(monthLabel(m) + "のKPIを" + n + "件用意しました。目標を設定してください"); }
+  catch (e) { seeding.delete(m); console.warn(e); }
 }
 function monthNav(key) { return `<div class="monthnav"><button type="button" data-act="mprev" data-k="${key}" aria-label="前の月">‹</button><span>${monthLabel(S[key])}</span><button type="button" data-act="mnext" data-k="${key}" aria-label="次の月">›</button></div>`; }
 
@@ -281,7 +305,7 @@ function vKpi() {
     if (!S.isAdmin) return head + `<div class="empty"><p>${monthLabel(m)}に表示できるKPIはありません。</p></div>`;
     return head + `<div class="empty"><p>${monthLabel(m)}の月次目標はまだありません。</p>
       ${prev.length ? `<p><button class="btn sec" type="button" data-act="kpi-carry">先月のKPI（${prev.length}件）を引き継ぐ</button></p>` : ""}
-      <p class="muted" style="font-size:.85rem">よく使う指標から始める：</p>
+      <p class="muted" style="font-size:.85rem">指標を追加する：</p>
       <div class="tpls">${KPI_TEMPLATES.map((t, i) => `<button class="btn sec small" type="button" data-act="kpi-tpl" data-i="${i}">${esc(t.name)}</button>`).join("")}</div></div>`;
   }
   const rows = ks.map(k => {
@@ -289,7 +313,7 @@ function vKpi() {
     return `<tr><td><b>${esc(k.name)}</b><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}</div></td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
         return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${md(wk)}のMTG" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
-      <td class="num"><b>${num(s.a.v)}</b> / ${num(s.t)}</td><td><span class="pill ${s.st.c}">${Math.round(s.rate * 100)}%</span></td></tr>`;
+      <td class="num"><b>${num(s.a.v)}</b> / ${s.t > 0 ? num(s.t) : "—"}</td><td><span class="pill ${s.st.c}">${s.t > 0 ? Math.round(s.rate * 100) + "%" : "目標未設定"}</span></td></tr>`;
   }).join("");
   return head + `<div class="stack">
     <section class="panel"><h3>月次目標の進捗<span class="hint">縦線は今日時点の目安ペース</span></h3>${ks.map(k => kpiRow(k, true)).join("")}</section>
