@@ -72,7 +72,13 @@ const isActive = () => S.isAdmin || (S.member && S.member.status === "active");
 const canFinance = () => S.isAdmin || (isActive() && S.member && S.member.finance === true);
 const activeMembers = () => S.members.filter(m => m.status === "active").sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
 const memName = id => { const m = S.members.find(x => x.id === id); return m ? (m.name || m.email || "名前未設定") : "（不明）"; };
-const mColor = id => { const i = activeMembers().findIndex(m => m.id === id); return i < 0 ? "var(--muted)" : "var(--m" + (i % 6 + 1) + ")"; };
+const MEMBER_COLORS = ["#1E5FC4", "#0E8A82", "#C27A12", "#C2417A", "#6B4FC2", "#4A7A2A", "#D2462F", "#2E86B8", "#8A5A3C", "#5B6578"];
+const mColor = id => {
+  const m = S.members.find(x => x.id === id);
+  if (m && m.color && /^#[0-9A-Fa-f]{6}$/.test(m.color)) return m.color;
+  const i = activeMembers().findIndex(x => x.id === id);
+  return i < 0 ? "var(--muted)" : MEMBER_COLORS[i % MEMBER_COLORS.length];
+};
 const whoTag = id => `<span class="who" style="--mc:${mColor(id)}"><i></i>${esc(memName(id))}</span>`;
 const tabsVisible = () => TABS_ALL.filter(([k]) => (k !== "money" || canFinance()) && ((k !== "members" && k !== "settings") || S.isAdmin));
 
@@ -178,7 +184,7 @@ function taskItem(t, opts = {}) {
   const sw = sharedAll(t) ? "全員に共有" : "共有：" + t.shareWith.map(memName).join("・");
   const late = opts.late ? `<span class="pill bad">${daysBetween(t.date, TODAY)}日遅れ</span> ` : "";
   const sub = [opts.showDate ? md(t.date) : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
-  return `<div class="task${t.done ? " done" : ""}">
+  return `<div class="task${t.done ? " done" : ""}" style="--mc:${mColor(t.owner)}">
     <div class="time">${esc(t.start || "")}${t.end ? "–" + esc(t.end) : ""}</div>
     <div><div class="what">${late}${esc(taskTitle(t))}</div>${whoTag(t.owner)}</div>
     <div class="acts">${canToggleTask(t) ? `<label><input type="checkbox" data-act="task-done" data-id="${esc(t.id)}" ${t.done ? "checked" : ""}>完了</label>` : (t.done ? `<span class="pill good">完了</span>` : "")}<button class="link" type="button" data-act="task-open" data-id="${esc(t.id)}">${canEditTask(t) ? "編集" : "詳細"}</button></div>
@@ -218,6 +224,7 @@ function render() {
   }
   if (!S.need.length || !S.need.every(k => S.ready[k])) { main.innerHTML = `<div class="empty"><p>データを読み込んでいます…</p></div>`; return; }
   const views = { home: vHome, kpi: vKpi, cal: vCal, money: vMoney, members: vMembers, settings: vSettings };
+  if (S.tab === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
   main.innerHTML = views[S.tab]();
   window.scrollTo(0, prevScroll);
@@ -347,10 +354,11 @@ function vMembers() {
   const list = [...S.members].sort((a, b) => ({ pending: 0, active: 1, inactive: 2 }[a.status] ?? 3) - ({ pending: 0, active: 1, inactive: 2 }[b.status] ?? 3) || (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
   const st = s => s === "active" ? `<span class="pill good">利用中</span>` : s === "pending" ? `<span class="pill warn">承認待ち</span>` : `<span class="pill plain">停止中</span>`;
   return `<div class="bar"><h2>メンバー</h2></div>
-  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">運営メンバーにはこのページのURLを送り、Googleでログインしてもらってください。ログインした人がここに「承認待ち」で表示されるので、本人であることを確認してから承認します。表示名はカレンダーやKPIに出る名前です。</p>
-  <div class="tablewrap"><table><thead><tr><th>表示名</th><th>Googleアカウント</th><th>状態</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
+  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">運営メンバーにはこのページのURLを送り、Googleでログインしてもらってください。ログインした人がここに「承認待ち」で表示されるので、本人であることを確認してから承認します。表示名と色は、カレンダーやKPIで担当者を見分けるのに使います。</p>
+  <div class="tablewrap"><table><thead><tr><th>表示名</th><th>色</th><th>Googleアカウント</th><th>状態</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
   ${list.map(m => { const self = m.id === uid(); return `<tr>
     <td><input class="name-in" id="mn-${esc(m.id)}" value="${esc(m.name || "")}" data-act="mem-name" data-id="${esc(m.id)}" aria-label="表示名"></td>
+    <td><div class="swatches" role="group" aria-label="${esc(m.name || "")}の色">${MEMBER_COLORS.map(c => `<button type="button" class="swatch" style="background:${c}" data-act="mem-color" data-id="${esc(m.id)}" data-c="${c}" aria-label="色 ${c}" aria-pressed="${mColor(m.id) === c}"></button>`).join("")}</div></td>
     <td>${esc(m.email || "")}</td><td>${st(m.status)}</td>
     <td>${self ? `<span class="muted">管理者</span>` : `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mf-${esc(m.id)}" data-act="mem-fin" data-id="${esc(m.id)}" ${m.finance ? "checked" : ""}>見られる</label>`}</td>
     <td>${self ? "" : m.status === "pending" ? `<button class="btn small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">承認する</button> <button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">拒否</button>` : m.status === "active" ? `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">利用停止</button>` : `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">再開する</button>`}</td></tr>`; }).join("")}
@@ -358,10 +366,13 @@ function vMembers() {
   <p class="muted" style="font-size:.8rem;margin-top:10px">収支を見られる人は、収支の閲覧のみできます（編集は管理者だけ）。</p>`;
 }
 
+const rowHTML = (key, i, x, label) => `<div class="row"><button type="button" class="handle" aria-label="並べ替え（↑↓キーで移動）" title="ドラッグして並べ替え"><svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true" fill="currentColor"><circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg></button><input id="s-${key}-${i}" value="${esc(x)}" aria-label="${esc(label || "項目")}"><button class="btn sec small" type="button" data-rm>外す</button></div>`;
+function markDirty() { S.settingsDirty = true; const h = document.getElementById("save-hint"); if (h) h.hidden = false; }
 function vSettings() {
   const c = cfg();
-  const list = (key, items, label) => `<section class="panel"><h3>${label}</h3><div class="listedit" data-list="${key}">${items.map((x, i) => `<div class="row"><input id="s-${key}-${i}" value="${esc(x)}" aria-label="${label}${i + 1}"><button class="btn sec small" type="button" data-rm>外す</button></div>`).join("")}</div><button class="link" type="button" data-add="${key}" style="margin-top:8px">＋ 追加</button></section>`;
-  return `<div class="bar"><h2>設定</h2><button class="btn" type="button" data-act="save-settings">保存</button></div>
+  const list = (key, items, label) => `<section class="panel"><h3>${label}</h3><div class="listedit" data-list="${key}">${items.map((x, i) => rowHTML(key, i, x, label)).join("")}</div><button class="link" type="button" data-add="${key}" style="margin-top:8px">＋ 追加</button></section>`;
+  return `<div class="bar"><h2>設定</h2><span class="pill warn" id="save-hint" ${S.settingsDirty ? "" : "hidden"}>未保存の変更があります</span><button class="btn" type="button" data-act="save-settings">保存</button></div>
+    <p class="muted" style="font-size:.82rem;margin:-8px 0 14px">左の点のつまみをドラッグすると並び順を変えられます（キーボードではつまみを選んで↑↓キー）。この順番で業務登録や収支の選択肢に表示されます。</p>
     <div class="grid2">${list("routines", c.routines, "定例業務（業務登録の選択肢）")}${list("expenseCats", c.expenseCats, "支出カテゴリ")}${list("incomeCats", c.incomeCats, "収入カテゴリ")}${list("methods", c.methods, "支払方法")}</div>`;
 }
 
@@ -531,10 +542,13 @@ function importDialog() {
 
 /* ================= events ================= */
 document.addEventListener("click", async e => {
-  const tab = e.target.closest("#tabs [data-tab]"); if (tab) { S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } render(); window.scrollTo(0, 0); return; }
+  const tab = e.target.closest("#tabs [data-tab]"); if (tab) {
+    if (S.tab === "settings" && S.settingsDirty && tab.dataset.tab !== "settings" && !S.leaveArmed) { S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します"); setTimeout(() => S.leaveArmed = false, 4000); return; }
+    if (tab.dataset.tab !== "settings") S.settingsDirty = false;
+    S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } render(); window.scrollTo(0, 0); return; }
   const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) {
-    const rm = e.target.closest("[data-rm]"); if (rm && !rm.closest("dialog")) { rm.parentElement.remove(); return; }
-    const ad = e.target.closest("[data-add]"); if (ad && !ad.closest("dialog")) { const box = document.querySelector(`[data-list="${ad.dataset.add}"]`); box.insertAdjacentHTML("beforeend", `<div class="row"><input id="s-${ad.dataset.add}-${Date.now()}" value="" aria-label="追加項目"><button class="btn sec small" type="button" data-rm>外す</button></div>`); box.lastElementChild.querySelector("input").focus(); }
+    const rm = e.target.closest("[data-rm]"); if (rm && !rm.closest("dialog")) { rm.parentElement.remove(); markDirty(); return; }
+    const ad = e.target.closest("[data-add]"); if (ad && !ad.closest("dialog")) { const box = document.querySelector(`[data-list="${ad.dataset.add}"]`); box.insertAdjacentHTML("beforeend", rowHTML(ad.dataset.add, Date.now(), "", "追加項目")); box.lastElementChild.querySelector("input").focus(); markDirty(); }
     return;
   }
   const act = a.dataset.act, id = a.dataset.id;
@@ -556,10 +570,11 @@ document.addEventListener("click", async e => {
   if (act === "led-new") return ledDialog(null);
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
+  if (act === "mem-color") { try { await updateDoc(doc(db, "members", id), { color: a.dataset.c }); toast("色を変更しました"); } catch (err) { toast(errMsg(err)); } return; }
   if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err)); } return; }
   if (act === "save-settings") {
     const out = {}; ["routines", "expenseCats", "incomeCats", "methods"].forEach(k => { out[k] = [...document.querySelectorAll(`[data-list="${k}"] input`)].map(i => i.value.trim()).filter(Boolean); });
-    try { await setDoc(doc(db, "config", "main"), out); toast("設定を保存しました"); } catch (err) { toast(errMsg(err)); }
+    try { await setDoc(doc(db, "config", "main"), out); S.settingsDirty = false; toast("設定を保存しました"); render(); } catch (err) { toast(errMsg(err)); }
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Enter") { const r = e.target.closest && e.target.closest("tr[data-act=led-edit]"); if (r) ledDialog(S.ledger.find(x => x.id === r.dataset.id)); } });
@@ -573,6 +588,35 @@ document.addEventListener("change", async e => {
     if (act === "mem-name") { await updateDoc(doc(db, "members", id), { name: a.value.trim() }); toast("表示名を保存しました"); }
     if (act === "mem-fin") { await updateDoc(doc(db, "members", id), { finance: a.checked }); toast(a.checked ? "収支を見られるようにしました" : "収支を見られないようにしました"); }
   } catch (err) { if (a.type === "checkbox") a.checked = !a.checked; toast(errMsg(err)); }
+});
+
+/* ---------- 並べ替え（ドラッグ＆ドロップ・タッチ・キーボード対応） ---------- */
+document.addEventListener("input", e => { if (e.target.closest("[data-list]")) markDirty(); });
+document.addEventListener("pointerdown", e => {
+  const handle = e.target.closest(".listedit .handle"); if (!handle || e.button > 0) return;
+  e.preventDefault();
+  const row = handle.closest(".row"), box = row.parentElement;
+  S.dragging = true; row.classList.add("dragging");
+  const move = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    const others = [...box.children].filter(r => r !== row);
+    const before = others.find(r => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
+    if (before) { if (row.nextElementSibling !== before) box.insertBefore(row, before); }
+    else if (box.lastElementChild !== row) box.appendChild(row);
+  };
+  // 行をDOM上で動かすとポインターキャプチャが外れるため、document で受け取る
+  const end = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", end); document.removeEventListener("pointercancel", end);
+    row.classList.remove("dragging"); S.dragging = false; markDirty(); handle.focus();
+  };
+  document.addEventListener("pointermove", move); document.addEventListener("pointerup", end); document.addEventListener("pointercancel", end);
+});
+document.addEventListener("keydown", e => {
+  const handle = e.target.closest && e.target.closest(".listedit .handle"); if (!handle) return;
+  const row = handle.closest(".row"), box = row.parentElement;
+  if (e.key === "ArrowUp" && row.previousElementSibling) { e.preventDefault(); box.insertBefore(row, row.previousElementSibling); handle.focus(); markDirty(); }
+  if (e.key === "ArrowDown" && row.nextElementSibling) { e.preventDefault(); box.insertBefore(row.nextElementSibling, row); handle.focus(); markDirty(); }
 });
 
 const h0 = (location.hash || "").slice(1); if (TABS_ALL.some(([k]) => k === h0)) S.tab = h0;
