@@ -406,18 +406,51 @@ function vSettings() {
 
 /* ================= dialogs ================= */
 const dlg = $("#dlg"), form = $("#dlg-form"); let onSubmit = null, onDelete = null;
-function openDlg(title, body, { submit, del, readOnly } = {}) {
+/* 入力の記憶：端末ごと・アカウントごとにブラウザ内へ保存（サーバーには送らない） */
+const memKey = k => "cb_" + (uid() || "anon") + "_" + k;
+const memGet = k => { try { return JSON.parse(ls.get(memKey(k), "null")); } catch (e) { return null; } };
+const memSet = (k, v) => ls.set(memKey(k), v == null ? "null" : JSON.stringify(v));
+function readFormState() {
+  const out = {};
+  form.querySelectorAll("input[name],select[name],textarea[name]").forEach(el => {
+    if (el.type === "file") return;
+    if (el.type === "checkbox") { (out[el.name] = out[el.name] || []); if (el.checked) out[el.name].push(el.value); }
+    else out[el.name] = el.value;
+  });
+  return out;
+}
+function applyFormState(st) {
+  const set = el => {
+    const v = st[el.name]; if (v === undefined) return;
+    if (el.type === "checkbox") el.checked = Array.isArray(v) && v.includes(el.value);
+    else if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === v)) return;
+    else el.value = v;
+  };
+  // 先に区分・「全員」を戻して、連動する選択肢を作り直してから残りを戻す
+  form.querySelectorAll("#f-type,[name$=_all]").forEach(el => { set(el); el.dispatchEvent(new Event("change")); });
+  form.querySelectorAll("input[name],select[name],textarea[name]").forEach(el => { if (el.id !== "f-type" && !/_all$/.test(el.name)) set(el); });
+}
+let draftKey = null;
+function openDlg(title, body, { submit, del, readOnly, draft } = {}) {
   form.innerHTML = `<div class="dlg-h"><h3>${esc(title)}</h3><button type="button" data-close aria-label="閉じる">×</button></div>
     <div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
     <div class="dlg-f">${del ? `<button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button>` : ""}<div class="sp">${readOnly ? `<button class="btn" type="button" data-close>閉じる</button>` : `<button class="btn sec" type="button" data-close>キャンセル</button><button class="btn" type="submit">保存</button>`}</div></div>`;
-  onSubmit = submit; onDelete = del;
+  onSubmit = submit; onDelete = del; draftKey = draft || null;
   try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); }
   const f = form.querySelector("input:not([type=checkbox]),select,textarea"); if (f && !readOnly) f.focus();
 }
-function closeDlg() { try { dlg.close(); } catch (e) { dlg.removeAttribute("open"); } }
+function closeDlg() { try { dlg.close(); } catch (e) { dlg.removeAttribute("open"); } draftKey = null; }
+function restoreDraft() {
+  if (!draftKey) return; const d = memGet("draft_" + draftKey); if (!d) return;
+  applyFormState(d);
+  const b = form.querySelector(".dlg-b"); b.insertAdjacentHTML("afterbegin", `<p class="banner" id="f-draft" style="grid-column:1/-1;margin:0">入力途中の内容を復元しました。<button class="link" type="button" data-discard>消して最初から</button></p>`);
+}
+form.addEventListener("input", () => { if (draftKey) memSet("draft_" + draftKey, readFormState()); });
+form.addEventListener("change", () => { if (draftKey) memSet("draft_" + draftKey, readFormState()); });
 function showErr(err) { const p = $("#f-err"); p.hidden = false; p.textContent = typeof err === "string" ? err : errMsg(err); }
 form.addEventListener("click", e => {
-  if (e.target.closest("[data-close]")) { closeDlg(); return; }
+  if (e.target.closest("[data-discard]")) { const k = draftKey; memSet("draft_" + k, null); closeDlg(); if (k === "task") taskDialog(null, S.selDay); if (k === "led") ledDialog(null); return; }
+  if (e.target.closest("[data-close]")) { if (draftKey) memSet("draft_" + draftKey, null); closeDlg(); return; }
   const d = e.target.closest("#f-del");
   if (d) {
     if (d.dataset.armed) Promise.resolve(onDelete()).then(() => { closeDlg(); toast("削除しました"); }).catch(showErr);
@@ -428,7 +461,8 @@ form.addEventListener("submit", async e => {
   e.preventDefault(); if (!onSubmit) return;
   const fd = new FormData(form); const f = Object.fromEntries(fd.entries()); f.__fd = fd;
   const btn = form.querySelector("[type=submit]"); if (btn) btn.disabled = true;
-  try { const r = await onSubmit(f); if (r !== false) { closeDlg(); toast("保存しました"); } }
+  const dk = draftKey;
+  try { const r = await onSubmit(f); if (r !== false) { if (dk) memSet("draft_" + dk, null); closeDlg(); toast("保存しました"); } }
   catch (err) { showErr(err); }
   finally { if (btn) btn.disabled = false; }
 });
@@ -479,7 +513,8 @@ function taskDialog(t, date) {
       fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者です" }), { readOnly: true });
     return;
   }
-  const v = t || { date: date || S.selDay || TODAY, start: "17:30", end: "19:00", owner: uid(), routine: c.routines[0], detail: "", shareWith: ["all"] };
+  const last = memGet("last_task") || {};
+  const v = t || { date: date || S.selDay || TODAY, start: last.start || "17:30", end: last.end || "19:00", owner: uid(), routine: last.routine && (c.routines.includes(last.routine) || last.routine === "__other") ? last.routine : c.routines[0], detail: "", shareWith: last.shareWith || ["all"] };
   const isOther = v.routine === "__other" || (v.routine && !c.routines.includes(v.routine));
   const routineOpts = [...c.routines.map(r => [r, r]), ...(isOther && v.routine !== "__other" ? [[v.routine, v.routine]] : []), ["__other", "その他（下に記述）"]];
   const body = fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true }) +
@@ -496,17 +531,20 @@ function taskDialog(t, date) {
       if (end && f.start && end < f.start) return showErr("終了時刻が開始時刻より前になっています。"), false;
       const data = { date: f.date, start: f.start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
       if (t) await updateDoc(doc(db, "tasks", t.id), data);
-      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "tasks"), data); }
+      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "tasks"), data); memSet("last_task", { start: data.start, end: data.end, routine: data.routine, shareWith: data.shareWith }); }
       S.selDay = f.date; S.calMonth = f.date.slice(0, 7);
     },
-    del: t ? () => deleteDoc(doc(db, "tasks", t.id)) : null
+    del: t ? () => deleteDoc(doc(db, "tasks", t.id)) : null,
+    draft: t ? null : "task"
   });
   wireShare("share");
+  if (!t) restoreDraft();
 }
 
 function ledDialog(r) {
   const c = cfg(); const names = activeMembers().map(m => m.name || m.email);
-  const v = r || { date: TODAY, type: "支出", category: c.expenseCats[0], owner: memName(uid()), method: "現金", settled: "未精算", title: "", amount: "", memo: "" };
+  const lastL = memGet("last_led") || {};
+  const v = r || { date: TODAY, type: lastL.type || "支出", category: lastL.category || c.expenseCats[0], owner: lastL.owner || memName(uid()), method: lastL.method || "現金", settled: lastL.settled || "未精算", title: "", amount: "", memo: "" };
   const ownerList = v.owner && !names.includes(v.owner) ? [...names, v.owner] : names;
   const catList = t => t === "収入" ? c.incomeCats : c.expenseCats;
   const body = fld("項目", `<input name="title" id="f-title" required value="${esc(v.title)}" placeholder="例：チラシ印刷代">`, { full: true, req: true }) +
@@ -521,13 +559,15 @@ function ledDialog(r) {
       const amt = Number(f.amount); if (!(amt >= 0)) return showErr("金額を数字で入力してください。"), false;
       const data = { title: f.title.trim(), type: f.type, category: f.category, amount: amt, date: f.date, owner: f.owner, method: f.method, settled: f.settled, memo: f.memo.trim() };
       if (r) await updateDoc(doc(db, "ledger", r.id), data);
-      else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "ledger"), data); }
+      else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "ledger"), data); memSet("last_led", { type: data.type, category: data.category, owner: data.owner, method: data.method, settled: data.settled }); }
       S.moneyMonth = f.date.slice(0, 7);
     },
-    del: r ? () => deleteDoc(doc(db, "ledger", r.id)) : null
+    del: r ? () => deleteDoc(doc(db, "ledger", r.id)) : null,
+    draft: r ? null : "led"
   });
   const ty = form.querySelector("#f-type"), ca = form.querySelector("#f-category");
-  ty.addEventListener("change", () => { ca.innerHTML = catList(ty.value).map(o => `<option>${esc(o)}</option>`).join(""); });
+  ty.addEventListener("change", () => { const keep = ca.value; ca.innerHTML = catList(ty.value).map(o => `<option${o === keep ? " selected" : ""}>${esc(o)}</option>`).join(""); });
+  if (!r) restoreDraft();
 }
 
 /* CSV import (Notionの書き出しと同じ列名：項目,区分,カテゴリ,金額,日付,担当者,支払方法,精算,メモ) */
