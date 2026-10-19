@@ -170,7 +170,7 @@ function kpiRow(k, withEdit) {
   const cls = s.st.c === "good" ? "good" : (s.st.c === "warn" || s.st.c === "bad") ? "warn" : "";
   const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
   return `<div class="kpi">
-    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button>` : ""}</div>
+    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : ""}</div>
     <div class="nums">${s.t > 0 ? `<b>${num(s.a.v)}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
     <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTGごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
@@ -551,7 +551,7 @@ function normDate(s) {
   const d = new Date(s); return isNaN(d) ? "" : ymd(d);
 }
 function importDialog() {
-  openDlg("CSVを取り込む", fld("CSVファイル", `<input type="file" id="f-csv" name="csv" accept=".csv,text/csv" required>`, { full: true, help: "1行目の列名：項目, 区分, カテゴリ, 金額, 日付, 担当者, 支払方法, 精算, メモ（NotionのCSV書き出しをそのまま使えます）" }) + `<p class="muted full" id="f-prev" style="grid-column:1/-1;margin:0;font-size:.85rem"></p>`, {
+  openDlg("CSVを取り込む", fld("CSVファイル", `<input type="file" id="f-csv" name="csv" accept=".csv,text/csv" required>`, { full: true, help: "1行目の列名：項目, 区分, カテゴリ, 金額, 日付, 担当者, 支払方法, 精算, メモ（NotionのCSV書き出しをそのまま使えます）。日付・項目・金額が同じ記録は登録済みとして飛ばします" }) + `<p class="muted full" id="f-prev" style="grid-column:1/-1;margin:0;font-size:.85rem"></p>`, {
     submit: async () => {
       const file = form.querySelector("#f-csv").files[0]; if (!file) return showErr("ファイルを選んでください。"), false;
       const rows = parseCSV(await file.text()); if (rows.length < 2) return showErr("データ行がありません。"), false;
@@ -562,8 +562,14 @@ function importDialog() {
         return { title: g("項目"), type: g("区分") === "収入" ? "収入" : "支出", category: g("カテゴリ") || "その他", amount: Number(g("金額").replace(/[¥￥,円\s]/g, "")) || 0, date: normDate(g("日付")), owner: g("担当者"), method: g("支払方法"), settled: g("精算") || "対象外", memo: g("メモ"), createdAt: serverTimestamp() };
       }).filter(x => x.title && x.date);
       if (!items.length) return showErr("取り込める行がありませんでした。日付の形式を確認してください。"), false;
+      const keyOf = x => [x.date, x.title, Number(x.amount), x.type].join("|");
+      const have = new Set(S.ledger.map(keyOf));
+      const fresh = items.filter(x => !have.has(keyOf(x)));
+      const skipped = items.length - fresh.length;
+      if (!fresh.length) { closeDlg(); toast("すべて登録済みでした（" + skipped + "件）。追加はありません"); return false; }
+      items.length = 0; items.push(...fresh); S.importSkipped = skipped;
       for (let i = 0; i < items.length; i += 400) { const b = writeBatch(db); items.slice(i, i + 400).forEach(x => b.set(doc(collection(db, "ledger")), x)); await b.commit(); }
-      toast(items.length + "件を取り込みました");
+      closeDlg(); toast(items.length + "件を取り込みました" + (S.importSkipped ? "（登録済みの" + S.importSkipped + "件は飛ばしました）" : "")); return false;
     }
   });
 }
@@ -587,6 +593,10 @@ document.addEventListener("click", async e => {
   if (act === "kpi-new") return kpiDialog(null);
   if (act === "kpi-tpl") return kpiDialog(null, KPI_TEMPLATES[+a.dataset.i]);
   if (act === "kpi-edit") return kpiDialog(S.kpis.find(k => k.id === id));
+  if (act === "kpi-del") {
+    if (S.armDel !== id) { S.armDel = id; render(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; render(); }, 5000); return; }
+    S.armDel = null; try { await deleteDoc(doc(db, "kpis", id)); toast("KPIを削除しました"); } catch (err) { toast(errMsg(err)); } return;
+  }
   if (act === "kpi-carry") {
     const prev = S.kpis.filter(k => k.month === shiftMonth(S.kpiMonth, -1));
     try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, target: k.target, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err)); }
