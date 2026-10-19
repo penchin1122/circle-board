@@ -183,13 +183,14 @@ const relevant = t => sharedAll(t) || t.owner === uid() || (t.shareWith || []).i
 const canEditTask = t => S.isAdmin || t.createdBy === uid();
 const canToggleTask = t => canEditTask(t) || t.owner === uid();
 const taskTitle = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "（内容未記入）");
+const timeLabel = t => !t.start ? "終日" : esc(t.start) + (t.end ? "–" + esc(t.end) : "〜");
 const sortTasks = (a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || ""));
 function taskItem(t, opts = {}) {
   const sw = sharedAll(t) ? "全員に共有" : "共有：" + t.shareWith.map(memName).join("・");
   const late = opts.late ? `<span class="pill bad">${daysBetween(t.date, TODAY)}日遅れ</span> ` : "";
   const sub = [opts.showDate ? md(t.date) : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
   return `<div class="task${t.done ? " done" : ""}" style="--mc:${mColor(t.owner)}">
-    <div class="time">${esc(t.start || "")}${t.end ? "–" + esc(t.end) : ""}</div>
+    <div class="time">${timeLabel(t)}</div>
     <div><div class="what">${late}${esc(taskTitle(t))}</div>${whoTag(t.owner)}</div>
     <div class="acts">${canToggleTask(t) ? `<label><input type="checkbox" data-act="task-done" data-id="${esc(t.id)}" ${t.done ? "checked" : ""}>完了</label>` : (t.done ? `<span class="pill good">完了</span>` : "")}<button class="link" type="button" data-act="task-open" data-id="${esc(t.id)}">${canEditTask(t) ? "編集" : "詳細"}</button></div>
     <div class="sub">${esc(sub)}</div>
@@ -508,28 +509,30 @@ function taskDialog(t, date) {
   const c = cfg();
   if (t && !canEditTask(t)) {
     const sw = sharedAll(t) ? "全員" : t.shareWith.map(memName).join("・");
-    openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${esc(t.start || "")}${t.end ? "–" + esc(t.end) : ""}</div>`) + fld("担当者", `<div class="ro">${esc(memName(t.owner))}</div>`) +
+    openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${timeLabel(t)}</div>`) + fld("担当者", `<div class="ro">${esc(memName(t.owner))}</div>`) +
       fld("担当業務", `<div class="ro">${esc(taskTitle(t))}</div>`, { full: true }) + (t.detail && t.routine !== "__other" ? fld("内容・メモ", `<div class="ro">${esc(t.detail)}</div>`, { full: true }) : "") +
       fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者です" }), { readOnly: true });
     return;
   }
   const last = memGet("last_task") || {};
-  const v = t || { date: date || S.selDay || TODAY, start: last.start || "17:30", end: last.end || "19:00", owner: uid(), routine: last.routine && (c.routines.includes(last.routine) || last.routine === "__other") ? last.routine : c.routines[0], detail: "", shareWith: last.shareWith || ["all"] };
+  const v = t || { date: date || S.selDay || TODAY, start: last.start ?? "17:30", end: last.end ?? "19:00", owner: uid(), routine: last.routine && (c.routines.includes(last.routine) || last.routine === "__other") ? last.routine : c.routines[0], detail: "", shareWith: last.shareWith || ["all"] };
   const isOther = v.routine === "__other" || (v.routine && !c.routines.includes(v.routine));
   const routineOpts = [...c.routines.map(r => [r, r]), ...(isOther && v.routine !== "__other" ? [[v.routine, v.routine]] : []), ["__other", "その他（下に記述）"]];
   const body = fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true }) +
     fld("担当者", sel("owner", memberOpts(), v.owner)) +
-    fld("開始", `<input type="time" name="start" id="f-start" required value="${esc(v.start || "")}">`, { req: true }) +
-    fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "空欄なら開始の1時間後" }) +
+    `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="allday" id="f-allday" value="1" ${t ? (!t.start ? "checked" : "") : (v.start ? "" : "checked")}>時間を決めない（終日・時間未定）</label></div>` +
+    fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`) +
+    fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "決まっていなければ空欄でOK" }) +
     fld("担当業務", sel("routine", routineOpts, v.routine === "__other" ? "__other" : v.routine), { full: true }) +
     fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true }) +
     shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。");
   openDlg(t ? "業務を編集" : "業務を登録", body, {
     submit: async f => {
-      let end = f.end; if (!end && f.start) { const [hh, mm] = f.start.split(":").map(Number); end = pad(Math.min(23, hh + 1)) + ":" + pad(mm); }
+      const allday = !!f.allday || !f.start;
+      const start = allday ? "" : f.start, end = allday ? "" : (f.end || "");
       if (f.routine === "__other" && !f.detail.trim()) return showErr("「その他」を選んだときは内容を記述してください。"), false;
-      if (end && f.start && end < f.start) return showErr("終了時刻が開始時刻より前になっています。"), false;
-      const data = { date: f.date, start: f.start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
+      if (end && start && end < start) return showErr("終了時刻が開始時刻より前になっています。"), false;
+      const data = { date: f.date, start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
       if (t) await updateDoc(doc(db, "tasks", t.id), data);
       else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "tasks"), data); memSet("last_task", { start: data.start, end: data.end, routine: data.routine, shareWith: data.shareWith }); }
       S.selDay = f.date; S.calMonth = f.date.slice(0, 7);
@@ -538,7 +541,10 @@ function taskDialog(t, date) {
     draft: t ? null : "task"
   });
   wireShare("share");
-  if (!t) restoreDraft();
+  const ad = form.querySelector("#f-allday"), st = form.querySelector("#f-start"), en = form.querySelector("#f-end");
+  const syncAd = () => { [st, en].forEach(x => { x.disabled = ad.checked; x.closest(".field").style.opacity = ad.checked ? .45 : 1; }); };
+  ad.addEventListener("change", () => { if (!ad.checked && !st.value) st.value = "17:30"; syncAd(); }); syncAd();
+  if (!t) { restoreDraft(); syncAd(); }
 }
 
 function ledDialog(r) {
