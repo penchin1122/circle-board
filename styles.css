@@ -533,3 +533,8 @@ label.checks input{margin-top:.3em;flex:none}
   .kpi-entry th,.kpi-entry td{padding-left:8px;padding-right:8px}
   .kpi-entry .cell{width:4.6em}
 }
+
+/* ページ名はヘッダーに表示するので、本文側の見出しは読み上げ用にだけ残す */
+.bar h2.vh{flex:0 0 1px;width:1px;height:1px;overflow:hidden;white-space:nowrap;clip-path:inset(50%)}
+.mast h1#page-title{font-size:1.35rem}
+@media (max-width:600px){.mast h1#page-title{font-size:1.05rem}}

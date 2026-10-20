@@ -317,6 +317,7 @@ const cu = (v, f, sign = "") => `<span class="cu" data-v="${Math.abs(Number(v) |
 function renderChrome() {
   const tools = $("#mast-tools"), tabs = $("#tabs"), foot = $("#drawer-foot"), mb = $("#menu-btn");
   if (!S.user || !isActive()) {
+    $("#page-title").textContent = "運営ボード"; document.title = "明治就活サークル 運営ボード";
     tabs.innerHTML = ""; foot.innerHTML = ""; mb.hidden = true; document.body.classList.remove("has-nav"); setMenu(false);
     tools.innerHTML = S.user ? `<span class="me">${esc(S.user.email || "")}</span><button class="ghost" type="button" data-act="logout">ログアウト</button>` : "";
     return;
@@ -329,7 +330,9 @@ function renderChrome() {
   const meName = memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || "");
   foot.innerHTML = `<div class="df-me"><b>${esc(meName)}</b><span class="muted">${esc(roleLabel(myRole()))}・${esc(S.user.email || "")}</span></div><button class="btn sec small" type="button" data-act="logout">ログアウト</button>`;
   const cur = TABS_ALL.find(([k]) => k === S.tab);
-  tools.innerHTML = `<span class="me cur-page">${esc(cur ? cur[1].replace(/（.*）/, "") : "")}</span><button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button>`;
+  const pageName = cur ? cur[1].replace(/（.*）/, "") : "運営ボード";
+  $("#page-title").textContent = pageName; document.title = pageName + "｜運営ボード";
+  tools.innerHTML = `<button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button>`;
 }
 function render() {
   renderChrome();
@@ -446,7 +449,7 @@ function vHome() {
 function vKpi() {
   const m = S.kpiMonth; const ks = S.kpis.filter(k => k.month === m).sort((a, b) => (a.order || 0) - (b.order || 0));
   const weeks = meetingsOfMonth(m); const prev = S.kpis.filter(k => k.month === shiftMonth(m, -1));
-  const head = `<div class="bar"><h2>KPI</h2>${monthNav("kpiMonth")}${canManage() ? `<button class="btn" type="button" data-act="kpi-new">KPIを追加</button>` : ""}</div>`;
+  const head = `<div class="bar"><h2 class="vh">KPI</h2>${monthNav("kpiMonth")}${canManage() ? `<button class="btn" type="button" data-act="kpi-new">KPIを追加</button>` : ""}</div>`;
   if (!ks.length) {
     if (!canManage()) return head + `<div class="empty"><p>${monthLabel(m)}に表示できるKPIはありません。</p></div>`;
     return head + `<div class="empty"><p>${monthLabel(m)}の月次目標はまだありません。</p>
@@ -485,7 +488,7 @@ function vCal() {
       <span class="dots">${list.map(t => `<i style="--mc:${mColor(ownersOf(t)[0])}"></i>`).join("")}</span></button>`;
   }
   const dayList = (byDay[S.selDay] || []).sort(sortTasks);
-  return `<div class="bar"><h2>業務カレンダー</h2>
+  return `<div class="bar"><h2 class="vh">業務カレンダー</h2>
     <label class="muted" style="font-size:.85rem;display:flex;gap:6px;align-items:center"><input type="checkbox" id="onlymine" data-act="onlymine" ${S.onlyMine ? "checked" : ""}>自分に関係する業務だけ</label>
     ${monthNav("calMonth")}${canWrite() ? `<button class="btn" type="button" data-act="task-new">業務を登録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
   <div class="callayout">
@@ -507,7 +510,7 @@ function vMoney() {
   const maxC = Math.max(1, ...Object.values(cats), ...Object.values(icats));
   const bars = (o, cls) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="hbar ${cls}"><span>${esc(k)}</span><span class="track"><i style="width:${(v / maxC * 100).toFixed(1)}%"></i></span><span class="val">${yen(v)}</span></div>`).join("");
   const stPill = s => s === "未精算" ? `<span class="pill warn">未精算</span>` : s === "精算済" ? `<span class="pill good">精算済</span>` : `<span class="pill plain">${esc(s || "対象外")}</span>`;
-  return `<div class="bar"><h2>収支</h2>${monthNav("moneyMonth")}${S.isAdmin ? `<button class="btn sec" type="button" data-act="led-import">CSVを取り込む</button><button class="btn" type="button" data-act="led-new">収支を記録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
+  return `<div class="bar"><h2 class="vh">収支</h2>${monthNav("moneyMonth")}${S.isAdmin ? `<button class="btn sec" type="button" data-act="led-import">CSVを取り込む</button><button class="btn" type="button" data-act="led-new">収支を記録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
   <div class="figs">
     <div class="fig"><div class="k">収入</div><div class="v pos">${cu(inc, "yen")}</div></div>
     <div class="fig"><div class="k">支出</div><div class="v neg">${cu(exp, "yen")}</div></div>
@@ -564,7 +567,7 @@ const safeUrl = u => /^https:\/\/[^\s"'<>]+$/i.test(u || "") ? u : "";
 const formShareText = f => (f.message ? f.message.trim() + "\n" : "") + f.url;
 function vForms() {
   const list = [...(S.forms || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
-  const head = `<div class="bar"><h2>フォーム</h2>${canManage() ? `<button class="btn" type="button" data-act="form-new">フォームを追加</button>` : ""}</div>
+  const head = `<div class="bar"><h2 class="vh">フォーム</h2>${canManage() ? `<button class="btn" type="button" data-act="form-new">フォームを追加</button>` : ""}</div>
     <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">新入生や参加者に送るGoogleフォームのリンク集です。「案内文をコピー」でLINEやインスタのDMに貼り付けて送れます。</p>`;
   if (!list.length) return head + `<div class="empty"><p>まだフォームが登録されていません。</p>${canManage() ? `<button class="btn small" type="button" data-act="form-new">最初のフォームを追加</button>` : `<p class="muted">管理者が追加すると、ここに表示されます。</p>`}</div>`;
   return head + `<div class="form-grid">${list.map((f, i) => `<article class="panel form-card">
