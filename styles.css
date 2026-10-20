@@ -434,3 +434,5 @@ a.btn{text-decoration:none;display:inline-block}
 .adm-head{margin-bottom:14px}
 .seg-lg span{padding:8px 18px;font-size:.92rem;display:inline-flex;align-items:center;gap:6px}
 .seg-lg .badge{margin-left:2px}
+.btn.danger-sec{background:#FFFFFF;color:var(--bad);border:1px solid var(--bad)}
+.btn.danger-sec:hover{background:var(--bad-soft);box-shadow:none}

@@ -31,7 +31,7 @@ const NEXTMTG = [...meetingsOfMonth(THISMONTH), ...meetingsOfMonth(shiftMonth(TH
 const mtgLabel = d => { const mt = meetingsOfMonth(d.slice(0, 7)); return mt[0] === d ? "第2木" : mt[1] === d ? "第4木" : "月末"; };
 const mtgName = d => mtgLabel(d) === "月末" ? "月末" : "MTG";
 const ls = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
-/* トースト：type = "success" | "error" | "info" | "warn"。最大3件まで重ねて表示 */
+/* トースト：type = "success" | "error" | "info" | "warn"。同時に出すのは1つだけ（新しいものが前のものと入れ替わる） */
 const TOAST_ICON = {
   success: '<path d="M20 6 9 17l-5-5"/>',
   error: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/>',
@@ -47,8 +47,8 @@ function toast(msg, type = "success", opts = {}) {
   const close = () => { if (el.dataset.closing) return; el.dataset.closing = "1"; el.classList.add("out"); setTimeout(() => el.remove(), 200); };
   if (opts.action) { const b = el.querySelector(".t-act"); b.textContent = opts.action.label; b.addEventListener("click", () => { close(); opts.action.run(); }); }
   el.querySelector(".t-x").addEventListener("click", close);
+  [...box.children].forEach(c => c.remove());
   box.appendChild(el);
-  while (box.children.length > 3) box.firstElementChild.remove();
   const ms = opts.duration || (type === "error" ? 6000 : opts.action ? 5000 : 2800);
   let timer = setTimeout(close, ms);
   el.addEventListener("pointerenter", () => clearTimeout(timer));
@@ -584,7 +584,7 @@ function vMembers() {
   const st = s => s === "active" ? `<span class="pill good">利用中</span>` : s === "pending" ? `<span class="pill warn">承認待ち</span>` : `<span class="pill plain">停止中</span>`;
   const invites = (S.invites || []).filter(iv => !S.members.some(m => (m.email || "").toLowerCase() === iv.id)).sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
   return `<div class="bar"><h2>メンバー</h2><button class="btn" type="button" data-act="inv-new">メンバーを追加</button></div>
-  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">「メンバーを追加」でGmailアドレスを登録しておくと、その人がGoogleでログインした瞬間に、承認なしで使えるようになります。登録していない人がログインした場合は「承認待ち」で表示されます。</p>
+  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">「拒否」「利用停止」にした人は「削除」で名簿から消せます。消した人がもう一度ログインした場合は、また「承認待ち」で表示されます。「メンバーを追加」でGmailアドレスを登録しておくと、その人がGoogleでログインした瞬間に、承認なしで使えるようになります。登録していない人がログインした場合は「承認待ち」で表示されます。</p>
   ${invites.length ? `<section class="panel" style="margin-bottom:16px"><h3>追加済み・まだログインしていない人<span class="hint">${invites.length}人</span></h3>
     ${invites.map(iv => `<div class="inv-row"><span class="who" style="--mc:${iv.color || "var(--muted)"}"><i></i><b>${esc(iv.name)}</b></span><span class="muted inv-mail">${esc(iv.id)}</span>${rolePill(roleOf(iv))}${iv.finance ? `<span class="pill info">収支閲覧</span>` : ""}<span class="sp"></span><button class="btn sec small" type="button" data-act="inv-copy" data-id="${esc(iv.id)}">案内文をコピー</button><button class="link" type="button" style="color:var(--bad)" data-act="inv-del" data-id="${esc(iv.id)}">${S.armDel === "inv:" + iv.id ? "本当に取り消す" : "取り消す"}</button></div>`).join("")}
   </section>` : ""}
@@ -595,7 +595,7 @@ function vMembers() {
     <td>${esc(m.email || "")}</td><td>${st(m.status)}</td>
     <td>${self ? `<span class="muted">管理者</span>` : `<select class="role-sel" id="mr-${esc(m.id)}" data-act="mem-role" data-id="${esc(m.id)}" aria-label="${esc(m.name || "")}の権限">${ROLES.map(([k, l]) => `<option value="${k}" ${roleOf(m) === k ? "selected" : ""}>${l}</option>`).join("")}</select>`}</td>
     <td>${self ? `<span class="muted">管理者</span>` : `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mf-${esc(m.id)}" data-act="mem-fin" data-id="${esc(m.id)}" ${m.finance ? "checked" : ""}>見られる</label>`}</td>
-    <td>${self ? "" : m.status === "pending" ? `<button class="btn small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">承認する</button> <button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">拒否</button>` : m.status === "active" ? `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">利用停止</button>` : `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">再開する</button>`}</td></tr>`; }).join("")}
+    <td>${self ? "" : m.status === "pending" ? `<button class="btn small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">承認する</button> <button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">拒否</button>` : m.status === "active" ? `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">利用停止</button>` : `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">再開する</button> <button class="btn small ${S.armDel === "mem:" + m.id ? "danger" : "sec danger-sec"}" type="button" data-act="mem-del" data-id="${esc(m.id)}">${S.armDel === "mem:" + m.id ? "本当に削除する" : "削除"}</button>`}</td></tr>`; }).join("")}
   </tbody></table></div>
   <div class="role-legend"><b>権限の違い</b><ul>${ROLES.map(([k, l]) => `<li><b>${l}</b>：${ROLE_HELP[k]}</li>`).join("")}<li><b>管理者（佐藤）</b>：上記すべて＋メンバー管理・設定・収支の編集</li></ul><span class="muted">「収支の閲覧」は権限とは別に、1人ずつ選べます（編集は管理者だけ）。</span></div>`;
 }
@@ -1011,6 +1011,17 @@ document.addEventListener("click", async e => {
     S.armDel = null; try { await deleteDoc(doc(db, "invites", id)); toast("追加を取り消しました", "info"); } catch (err) { toast(errMsg(err), "error"); } return;
   }
   if (act === "mem-color") { try { await updateDoc(doc(db, "members", id), { color: a.dataset.c }); toast("色を変更しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
+  if (act === "mem-del") {
+    const m = S.members.find(x => x.id === id); if (!m || m.status === "active" || m.id === uid()) return;
+    if (S.armDel !== "mem:" + id) { S.armDel = "mem:" + id; render(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; render(); }, 5000); return; }
+    S.armDel = null;
+    try {
+      await deleteDoc(doc(db, "members", id));
+      const em = (m.email || "").toLowerCase(); if (em && (S.invites || []).some(iv => iv.id === em)) await deleteDoc(doc(db, "invites", em));
+      toast((m.name || m.email || "メンバー") + "さんを名簿から削除しました", "info");
+    } catch (err) { toast(errMsg(err), "error"); }
+    return;
+  }
   if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "save-settings") {
     const out = {}; ["routines", "expenseCats", "incomeCats", "methods"].forEach(k => { out[k] = [...document.querySelectorAll(`[data-list="${k}"] input`)].map(i => i.value.trim()).filter(Boolean); });
