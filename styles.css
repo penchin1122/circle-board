@@ -518,7 +518,6 @@ label.checks input{margin-top:.3em;flex:none}
   /* PCのメニューボタンは三本線のまま（×にしない） */
   body.has-nav .menu-btn span{transform:none!important;opacity:1!important}
   body.has-nav .drawer{width:248px;transform:none;visibility:visible;box-shadow:none;border-right:1px solid var(--line);transition:none;z-index:6}
-  body.has-nav .drawer-x{display:none}
   body.has-nav:not(.nav-collapsed) .mast .logo{display:none}
   body.has-nav .drawer-bg{display:none}
   body.has-nav .drawer{padding-top:0}

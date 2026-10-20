@@ -305,6 +305,7 @@ function setMenu(open) {
 }
 document.addEventListener("click", e => {
   if (e.target.closest("#menu-btn")) { if (deskNav()) setDock(navCollapsed); else setMenu(!$("#drawer").classList.contains("open")); return; }
+  if (e.target.closest('[data-menu="close"]') && deskNav()) { setDock(false); return; }
   if (e.target.closest("#drawer-bg") || e.target.closest('[data-menu="close"]')) setMenu(false);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#drawer").classList.contains("open")) setMenu(false); });
