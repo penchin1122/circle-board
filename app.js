@@ -124,7 +124,13 @@ if (configured) {
     try {
       const snap = await getDoc(ref);
       if (!snap.exists()) {
-        await setDoc(ref, { name: u.displayName || u.email || "", email: u.email || "", status: S.isAdmin ? "active" : "pending", finance: S.isAdmin, createdAt: serverTimestamp() });
+        // 管理者が先に招待していれば、その内容（表示名・色・収支閲覧）で自動的に利用開始
+        let inv = null;
+        if (!S.isAdmin && u.email) { try { const is = await getDoc(doc(db, "invites", u.email.toLowerCase())); if (is.exists()) inv = is.data(); } catch (e) { } }
+        const base = { email: u.email || "", createdAt: serverTimestamp() };
+        if (S.isAdmin) await setDoc(ref, { ...base, name: u.displayName || u.email || "", status: "active", finance: true });
+        else if (inv) await setDoc(ref, { ...base, name: inv.name, status: "active", finance: !!inv.finance, ...(inv.color ? { color: inv.color } : {}) });
+        else await setDoc(ref, { ...base, name: u.displayName || u.email || "", status: "pending", finance: false });
       }
     } catch (e) { S.fatal = errMsg(e); render(); return; }
     memberUnsub = onSnapshot(ref, s => {
@@ -146,6 +152,7 @@ function startData() {
   listen("members", collection(db, "members"), s => S.members = docsOf(s));
   listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
   listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
+  if (S.isAdmin) listen("invites", collection(db, "invites"), s => S.invites = docsOf(s));
   if (S.isAdmin) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
   else {
     // 一般メンバーは「全員に公開」「自分に公開」「自分が担当」のKPIだけを取得（ルール上それ以外は読めない）
@@ -455,11 +462,44 @@ function vMoney() {
   </div>`;
 }
 
+const SITE_URL = location.origin + location.pathname.replace(/index\.html$/, "");
+const inviteText = name => `${name ? name + "さん、" : ""}明治就活サークルの運営ボードに追加しました。\n下のURLを開いて「Googleでログイン」してください（追加したGmailアドレスのアカウントでログインしてください）。\n${SITE_URL}\nスマホならSafari（AndroidはChrome）で開いて「ホーム画面に追加」すると、アプリのように使えます。`;
+function inviteDialog() {
+  const body = fld("Gmailアドレス", `<input type="email" name="email" id="f-email" required autocomplete="off" placeholder="例：yamada.taro@gmail.com">`, { full: true, req: true, help: "その人がログインに使うGoogleアカウントのアドレス" }) +
+    fld("表示名", `<input name="name" id="f-name" required placeholder="例：山田">`, { req: true, help: "カレンダーやKPIに出る名前" }) +
+    `<div class="field"><span class="lbl">色</span><div class="swatches" role="radiogroup" aria-label="色">${MEMBER_COLORS.map((c, i) => `<label class="sw-pick"><input type="radio" name="color" id="f-color-${i}" value="${c}" ${i === activeMembers().length % MEMBER_COLORS.length ? "checked" : ""}><span class="swatch" style="background:${c}" title="${c}"></span></label>`).join("")}</div></div>` +
+    `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="finance" id="f-finance" value="1">収支を見られるようにする（閲覧のみ）</label></div>`;
+  openDlg("メンバーを追加", body, {
+    submit: async f => {
+      const email = (f.email || "").trim().toLowerCase(); const name = (f.name || "").trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showErr("メールアドレスの形式が正しくありません。"), false;
+      if (!name) return showErr("表示名を入力してください。"), false;
+      const data = { name, color: f.color || null, finance: !!f.finance };
+      const existing = S.members.find(m => (m.email || "").toLowerCase() === email);
+      if (existing) {
+        await updateDoc(doc(db, "members", existing.id), { ...data, status: "active" });
+        return existing.status === "pending" ? name + "さんを承認しました（すでにログイン済みでした）" : name + "さんの設定を更新しました";
+      }
+      await setDoc(doc(db, "invites", email), { ...data, createdAt: serverTimestamp() });
+      closeDlg();
+      toast(name + "さんを追加しました。案内文をLINEなどで送ってください", "success", { duration: 8000, action: { label: "案内文をコピー", run: () => copyText(inviteText(name)) } });
+      return false;
+    }
+  });
+}
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); toast("案内文をコピーしました"); }
+  catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast("案内文をコピーしました"); } catch (_) { toast("コピーできませんでした", "error"); } ta.remove(); }
+}
 function vMembers() {
   const list = [...S.members].sort((a, b) => ({ pending: 0, active: 1, inactive: 2 }[a.status] ?? 3) - ({ pending: 0, active: 1, inactive: 2 }[b.status] ?? 3) || (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
   const st = s => s === "active" ? `<span class="pill good">利用中</span>` : s === "pending" ? `<span class="pill warn">承認待ち</span>` : `<span class="pill plain">停止中</span>`;
-  return `<div class="bar"><h2>メンバー</h2></div>
-  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">運営メンバーにはこのページのURLを送り、Googleでログインしてもらってください。ログインした人がここに「承認待ち」で表示されるので、本人であることを確認してから承認します。表示名と色は、カレンダーやKPIで担当者を見分けるのに使います。</p>
+  const invites = (S.invites || []).filter(iv => !S.members.some(m => (m.email || "").toLowerCase() === iv.id)).sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+  return `<div class="bar"><h2>メンバー</h2><button class="btn" type="button" data-act="inv-new">メンバーを追加</button></div>
+  <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">「メンバーを追加」でGmailアドレスを登録しておくと、その人がGoogleでログインした瞬間に、承認なしで使えるようになります。登録していない人がログインした場合は「承認待ち」で表示されます。</p>
+  ${invites.length ? `<section class="panel" style="margin-bottom:16px"><h3>追加済み・まだログインしていない人<span class="hint">${invites.length}人</span></h3>
+    ${invites.map(iv => `<div class="inv-row"><span class="who" style="--mc:${iv.color || "var(--muted)"}"><i></i><b>${esc(iv.name)}</b></span><span class="muted inv-mail">${esc(iv.id)}</span>${iv.finance ? `<span class="pill info">収支閲覧</span>` : ""}<span class="sp"></span><button class="btn sec small" type="button" data-act="inv-copy" data-id="${esc(iv.id)}">案内文をコピー</button><button class="link" type="button" style="color:var(--bad)" data-act="inv-del" data-id="${esc(iv.id)}">${S.armDel === "inv:" + iv.id ? "本当に取り消す" : "取り消す"}</button></div>`).join("")}
+  </section>` : ""}
   <div class="tablewrap"><table><thead><tr><th>表示名</th><th>色</th><th>Googleアカウント</th><th>状態</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
   ${list.map(m => { const self = m.id === uid(); return `<tr>
     <td><input class="name-in" id="mn-${esc(m.id)}" value="${esc(m.name || "")}" data-act="mem-name" data-id="${esc(m.id)}" aria-label="表示名"></td>
@@ -863,6 +903,12 @@ document.addEventListener("click", async e => {
   if (act === "led-new") return ledDialog(null);
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
+  if (act === "inv-new") return inviteDialog();
+  if (act === "inv-copy") { const iv = (S.invites || []).find(x => x.id === id); return copyText(inviteText(iv && iv.name)); }
+  if (act === "inv-del") {
+    if (S.armDel !== "inv:" + id) { S.armDel = "inv:" + id; render(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; render(); }, 5000); return; }
+    S.armDel = null; try { await deleteDoc(doc(db, "invites", id)); toast("追加を取り消しました", "info"); } catch (err) { toast(errMsg(err), "error"); } return;
+  }
   if (act === "mem-color") { try { await updateDoc(doc(db, "members", id), { color: a.dataset.c }); toast("色を変更しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "save-settings") {

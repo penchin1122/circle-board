@@ -379,3 +379,14 @@ dialog.swap .dlg-b{animation:soft-in .25s var(--ease-out)}
 .chip-dots{display:inline-flex;gap:2px;margin-right:4px;vertical-align:1px}
 .chip-dots .od{width:6px;height:6px;border-radius:50%;background:var(--mc);display:inline-block}
 .chip:has(.chip-dots)::before{display:none}
+
+/* ===== メンバーの追加 ===== */
+.inv-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;padding:10px 0;border-top:1px solid var(--line)}
+.panel h3 + .inv-row{border-top:0;padding-top:0}
+.inv-row .sp{flex:1}
+.inv-mail{font-size:.85rem;overflow-wrap:anywhere}
+.sw-pick{position:relative;cursor:pointer}
+.sw-pick input{position:absolute;opacity:0;pointer-events:none}
+.sw-pick .swatch{display:block;pointer-events:none}
+.sw-pick input:checked + .swatch{box-shadow:0 0 0 2px var(--fg)}
+.sw-pick input:focus-visible + .swatch{outline:3px solid var(--accent);outline-offset:2px}
