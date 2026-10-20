@@ -403,3 +403,34 @@ dialog.swap .dlg-b{animation:soft-in .25s var(--ease-out)}
 .role-sel{border:1px solid var(--line);border-radius:4px;padding:4px 6px;background:#FFFFFF;font-size:.85rem}
 .role-legend{margin-top:12px;font-size:.82rem;line-height:1.7}
 .role-legend ul{margin:4px 0 6px;padding-left:1.2em}
+
+/* ===== 記録のみのKPI ===== */
+.track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0 24px}
+.track-grid .kpi{border-top:0;padding:4px 0 12px}
+.kpi.track .nums b{font-size:1.5rem}
+.delta{display:inline-block;font-size:.8rem;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);margin-left:4px;vertical-align:2px}
+.delta.up{background:var(--good-soft);color:var(--good)}
+.delta.down{background:var(--bad-soft);color:var(--bad)}
+
+/* ===== フォーム ===== */
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.form-card{display:flex;flex-direction:column;gap:10px}
+.fc-head{display:flex;align-items:flex-start;gap:8px}
+.fc-head h3{margin:0;font-size:1rem;flex:1;min-width:0;overflow-wrap:anywhere}
+.fc-tools{display:flex;align-items:center;gap:4px;flex:none}
+.icon-btn{width:28px;height:28px;border:1px solid var(--line);border-radius:6px;background:#FFFFFF;color:var(--muted);cursor:pointer;line-height:1;transition:background-color .15s,transform .12s}
+.icon-btn:hover:not(:disabled){background:var(--surface-2);color:var(--fg)}
+.icon-btn:active:not(:disabled){transform:scale(.92)}
+.icon-btn:disabled{opacity:.35;cursor:default}
+.fc-desc{margin:0;font-size:.85rem;color:var(--muted)}
+.fc-msg{background:var(--surface-2);border-radius:8px;padding:8px 12px}
+.fc-msg .lbl{font-size:.72rem;font-weight:700;color:var(--muted)}
+.fc-msg p{margin:2px 0 0;font-size:.88rem;white-space:pre-line;overflow-wrap:anywhere}
+.fc-url{font-size:.78rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:auto}
+a.btn{text-decoration:none;display:inline-block}
+
+/* ===== 管理タブの切り替え ===== */
+.adm-head{margin-bottom:14px}
+.seg-lg span{padding:8px 18px;font-size:.92rem;display:inline-flex;align-items:center;gap:6px}
+.seg-lg .badge{margin-left:2px}

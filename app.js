@@ -78,19 +78,19 @@ const DEFAULTS = {
 // 毎月デフォルトで用意するKPI（管理者がその月を初めて開いたときに自動で追加）
 const DEFAULT_KPIS = [
   { key: "ig-follow", name: "インスタフォロー営業数", unit: "件", mode: "sum" },
-  { key: "ig-followers", name: "インスタフォロワー数", unit: "人", mode: "latest" },
-  { key: "line-reach", name: "公式LINEリーチ数", unit: "人", mode: "latest" },
+  { key: "ig-followers", name: "インスタフォロワー数", unit: "人", mode: "latest", track: true },
+  { key: "line-reach", name: "公式LINEリーチ数", unit: "人", mode: "latest", track: true },
   { key: "trial", name: "体験参加者数", unit: "人", mode: "sum" },
   { key: "join", name: "入会者数", unit: "人", mode: "sum" }
 ];
 const KPI_TEMPLATES = DEFAULT_KPIS;
 
-const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "<span class=\"hide-sm\">業務</span>カレンダー"], ["money", "収支"], ["members", "メンバー"], ["settings", "設定"]];
+const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "<span class=\"hide-sm\">業務</span>カレンダー"], ["forms", "フォーム"], ["money", "収支"], ["admin", "管理"]];
 const S = {
   user: null, member: null, isAdmin: false, dataKey: "",
   members: [], config: null, tasks: [], kpis: [], ledger: [],
   ready: {}, need: [],
-  tab: "home", kpiMonth: THISMONTH, calMonth: THISMONTH, selDay: TODAY, moneyMonth: THISMONTH,
+  tab: "home", adminSub: "members", forms: [], kpiMonth: THISMONTH, calMonth: THISMONTH, selDay: TODAY, moneyMonth: THISMONTH,
   onlyMine: ls.get("cb_onlymine", "0") === "1"
 };
 let memberUnsub = null, dataUnsubs = [];
@@ -117,7 +117,7 @@ const mColor = id => {
   return i < 0 ? "var(--muted)" : MEMBER_COLORS[i % MEMBER_COLORS.length];
 };
 const whoTag = id => `<span class="who" style="--mc:${mColor(id)}"><i></i>${esc(memName(id))}</span>`;
-const tabsVisible = () => TABS_ALL.filter(([k]) => (k !== "money" || canFinance()) && ((k !== "members" && k !== "settings") || S.isAdmin));
+const tabsVisible = () => TABS_ALL.filter(([k]) => (k !== "money" || canFinance()) && (k !== "admin" || S.isAdmin));
 
 /* ================= auth & data lifecycle ================= */
 function stopData() { dataUnsubs.forEach(u => u()); dataUnsubs = []; S.ready = {}; S.need = []; S.tasks = []; S.kpis = []; S.ledger = []; S.members = []; S.config = null; }
@@ -161,6 +161,7 @@ function startData() {
   listen("members", collection(db, "members"), s => S.members = docsOf(s));
   listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
   listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
+  listen("forms", collection(db, "forms"), s => S.forms = docsOf(s));
   if (S.isAdmin) listen("invites", collection(db, "invites"), s => S.invites = docsOf(s));
   if (canManage()) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
   else {
@@ -206,13 +207,35 @@ function kpiStatus(k) {
   else st = { c: "warn", t: "遅れ" };
   return { a, t, rate, el, st };
 }
+/* 「記録のみ」のKPI：目標・達成率・ゲージを出さず、最新値と前回からの増減だけを見る */
+const TRACK_NAMES = DEFAULT_KPIS.filter(d => d.track).map(d => d.name);
+const isTrack = k => k.track === true || (k.track === undefined && TRACK_NAMES.includes(k.name));
+function trackInfo(k) {
+  const pts = []; const pushPts = (kk, label) => { const w = kk.weekly || {}; meetingsOfMonth(kk.month).forEach(d => { const e = w[d]; if (e && e.value !== null && e.value !== undefined && e.value !== "") pts.push({ d, v: Number(e.value), label }); }); };
+  const prev = S.kpis.find(x => x.month === shiftMonth(k.month, -1) && x.name === k.name); if (prev) pushPts(prev, "先月");
+  pushPts(k, "");
+  const cur = pts.filter(p => p.d.slice(0, 7) === k.month);
+  const last = cur[cur.length - 1] || null; const idx = last ? pts.indexOf(last) : -1; const before = idx > 0 ? pts[idx - 1] : null;
+  return { last, before, delta: last && before ? last.v - before.v : null };
+}
+const deltaTag = (t, unit) => t.delta === null ? "" : `<span class="delta ${t.delta > 0 ? "up" : t.delta < 0 ? "down" : ""}">${t.delta > 0 ? "+" : t.delta < 0 ? "−" : "±"}${num(Math.abs(t.delta))}${esc(unit || "")}</span>`;
+const sinceLabel = t => t.before ? `${t.before.d.slice(0, 7) !== t.last.d.slice(0, 7) ? "先月" : ""}${mtgLabel(t.before.d)}（${md(t.before.d)}）から` : "";
 const viewersLabel = k => (!k.viewers || k.viewers.includes("all")) ? "全員に公開" : "公開：" + k.viewers.map(memName).join("・");
 function kpiRow(k, withEdit) {
+  const tools = withEdit && canManage() ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : "";
+  if (isTrack(k)) {
+    const t = trackInfo(k);
+    return `<div class="kpi track">
+    <div class="name">${esc(k.name)} <span class="pill plain">記録のみ</span>${tools}</div>
+    <div class="nums">${t.last ? `<b>${cu(t.last.v, "num")}</b>${esc(k.unit || "")} ${deltaTag(t, k.unit)}` : `<span class="muted">未記録</span>`}</div>
+    <div class="meta"><span>担当：${whoTag(k.owner)}</span>${t.last ? `<span>${mtgLabel(t.last.d)}（${md(t.last.d)}）時点</span>` : ""}${t.delta !== null ? `<span>${esc(sinceLabel(t))}の増減</span>` : ""}${canManage() ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
+  </div>`;
+  }
   const s = kpiStatus(k); const w = Math.min(100, s.rate * 100);
   const cls = s.st.c === "good" ? "good" : (s.st.c === "warn" || s.st.c === "bad") ? "warn" : "";
   const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
   return `<div class="kpi">
-    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && canManage() ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : ""}</div>
+    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${tools}</div>
     <div class="nums">${s.t > 0 ? `<b>${cu(s.a.v, "num")}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
     <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTG・月末ごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${canManage() ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
@@ -280,7 +303,7 @@ function renderChrome() {
   }
   const vis = tabsVisible(); if (!vis.some(([k]) => k === S.tab)) S.tab = "home";
   const pending = S.isAdmin ? S.members.filter(m => m.status === "pending").length : 0;
-  tabs.innerHTML = vis.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${k === S.tab}">${l}${k === "members" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
+  tabs.innerHTML = vis.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${k === S.tab}">${l}${k === "admin" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
   placeTabInd();
   tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${myRole() === "member" ? "" : "（" + roleLabel(myRole()) + "）"}</span><button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
 }
@@ -302,8 +325,8 @@ function render() {
     return;
   }
   if (!S.need.length || !S.need.every(k => S.ready[k])) { if (!main.querySelector(".sk-wrap")) main.innerHTML = skeleton(S.tab); return; }
-  const views = { home: vHome, kpi: vKpi, cal: vCal, money: vMoney, members: vMembers, settings: vSettings };
-  if (S.tab === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
+  const views = { home: vHome, kpi: vKpi, cal: vCal, forms: vForms, money: vMoney, admin: vAdmin };
+  if (S.tab === "admin" && S.adminSub === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
   const anim = S.anim || (main.querySelector(".sk-wrap") ? "in" : null); S.anim = null;
   main.innerHTML = views[S.tab]();
@@ -323,11 +346,11 @@ async function seedMonth(m) {
   DEFAULT_KPIS.forEach((d, i) => {
     if (cur.some(k => k.name === d.name)) return;
     const p = prev.find(k => k.name === d.name);
-    b.set(doc(db, "kpis", m + "-" + d.key), { name: d.name, unit: d.unit, mode: d.mode, target: p ? p.target : null, owner: p ? p.owner : uid(), viewers: p ? (p.viewers || ["all"]) : ["all"], month: m, weekly: {}, order: i + 1, createdAt: serverTimestamp() }); n++;
+    b.set(doc(db, "kpis", m + "-" + d.key), { name: d.name, unit: d.unit, mode: d.mode, track: p ? isTrack(p) : !!d.track, target: p ? p.target : null, owner: p ? p.owner : uid(), viewers: p ? (p.viewers || ["all"]) : ["all"], month: m, weekly: {}, order: i + 1, createdAt: serverTimestamp() }); n++;
   });
   // 空の月なら、先月に追加していた独自のKPIも目標ごと引き継ぐ
   if (!cur.length) prev.filter(k => !DEFAULT_KPIS.some(d => d.name === k.name)).forEach((k, i) => {
-    b.set(doc(collection(db, "kpis")), { name: k.name, unit: k.unit || "", mode: k.mode, target: k.target ?? null, owner: k.owner, viewers: k.viewers || ["all"], month: m, weekly: {}, order: 100 + i, createdAt: serverTimestamp() }); n++;
+    b.set(doc(collection(db, "kpis")), { name: k.name, unit: k.unit || "", mode: k.mode, track: isTrack(k), target: k.target ?? null, owner: k.owner, viewers: k.viewers || ["all"], month: m, weekly: {}, order: 100 + i, createdAt: serverTimestamp() }); n++;
   });
   b.set(doc(db, "config", "main"), { kpiSeeded: arrayUnion(m) }, { merge: true });
   try { await b.commit(); if (n) toast(monthLabel(m) + "のKPIを" + n + "件用意しました。目標を設定してください", "info", { duration: 5000 }); }
@@ -344,7 +367,7 @@ function skeleton(tab) {
   if (tab === "kpi") body = `<section class="panel">${skKpi(5)}</section>`;
   else if (tab === "cal") body = `<div class="callayout"><div class="cal sk-cal">${Array.from({ length: 35 }, () => `<div class="day">${sk("1.2em", 12)}</div>`).join("")}</div>${skPanel(3, "30%")}</div>`;
   else if (tab === "money") body = `<div class="figs">${Array.from({ length: 4 }, () => `<div class="fig">${sk("40%", 11)}<div style="margin-top:8px">${sk("70%", 22)}</div></div>`).join("")}</div>${skPanel(5, "25%")}`;
-  else if (tab === "members" || tab === "settings") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
+  else if (tab === "admin" || tab === "forms") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
   else body = `<div class="grid2"><div class="stack">${skPanel(2, "35%")}${skPanel(1, "45%")}</div><div class="stack"><section class="panel">${sk("35%", 16)}<div style="margin-top:14px">${skKpi(3)}</div></section></div></div>`;
   return `<div class="sk-wrap" role="status" aria-label="読み込み中">${head}${body}<span class="visually-hidden">読み込み中です</span></div>`;
 }
@@ -406,13 +429,15 @@ function vKpi() {
     return `<tr><td><b>${esc(k.name)}</b><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}</div></td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
         return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
-      <td class="num"><b>${num(s.a.v)}</b> / ${s.t > 0 ? num(s.t) : "—"}</td><td><span class="pill ${s.st.c}">${s.t > 0 ? Math.round(s.rate * 100) + "%" : "目標未設定"}</span></td></tr>`;
+      ${isTrack(k) ? (() => { const t = trackInfo(k); return `<td class="num">${t.last ? `<b>${num(t.last.v)}</b>` : "—"}</td><td>${t.delta !== null ? deltaTag(t, k.unit) : `<span class="pill plain">記録のみ</span>`}</td>`; })()
+        : `<td class="num"><b>${num(s.a.v)}</b> / ${s.t > 0 ? num(s.t) : "—"}</td><td><span class="pill ${s.st.c}">${s.t > 0 ? Math.round(s.rate * 100) + "%" : "目標未設定"}</span></td>`}</tr>`;
   }).join("");
   return head + `<div class="stack">
-    <section class="panel"><h3>月次目標の進捗<span class="hint">縦線は今日時点の目安ペース</span></h3>${ks.map(k => kpiRow(k, true)).join("")}</section>
+    <section class="panel"><h3>月次目標の進捗<span class="hint">縦線は今日時点の目安ペース</span></h3>${ks.filter(k => !isTrack(k)).map(k => kpiRow(k, true)).join("") || `<p class="muted" style="margin:0">目標を設定しているKPIはありません。</p>`}</section>
+    ${ks.some(isTrack) ? `<section class="panel"><h3>記録のみの指標<span class="hint">最新値と、前回からの増減</span></h3><div class="track-grid">${ks.filter(isTrack).map(k => kpiRow(k, true)).join("")}</div></section>` : ""}
     <section><h3 style="font-size:.95rem;margin:0 0 8px">ミーティング・月末ごとの進捗</h3>
       <p class="muted" style="font-size:.82rem;margin:0 0 8px">第2・第4木曜日の定例MTGと月末の3回、各KPIの担当者が実績を入力します。入力すると自動で保存されます。「最新値」はその時点の数値（例：会員数）、「合計」は前回から増えた分を入れてください（第2木＝月初から、第4木＝第2木の翌日から、月末＝第4木の翌日から月末まで）。</p>
-      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回" : ""}</th>`).join("")}<th class="num">実績 / 目標</th><th>達成率</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回" : ""}</th>`).join("")}<th class="num">実績 / 目標</th><th>達成率・増減</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section></div>`;
 }
 
@@ -500,6 +525,59 @@ function inviteDialog() {
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); toast("案内文をコピーしました"); }
   catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast("案内文をコピーしました"); } catch (_) { toast("コピーできませんでした", "error"); } ta.remove(); }
+}
+function vAdmin() {
+  const sub = S.adminSub === "settings" ? "settings" : "members";
+  const pending = S.members.filter(m => m.status === "pending").length;
+  const sw = `<div class="seg seg-lg" role="tablist" aria-label="管理"><label><input type="radio" name="adminsub" id="adm-members" value="members" data-act="adm-sub" ${sub === "members" ? "checked" : ""}><span>メンバー${pending ? `<span class="badge">${pending}</span>` : ""}</span></label><label><input type="radio" name="adminsub" id="adm-settings" value="settings" data-act="adm-sub" ${sub === "settings" ? "checked" : ""}><span>設定</span></label></div>`;
+  return `<div class="adm-head">${sw}</div>` + (sub === "settings" ? vSettings() : vMembers());
+}
+/* ===== フォーム：外部に送るGoogleフォームのリンク集 ===== */
+const safeUrl = u => /^https:\/\/[^\s"'<>]+$/i.test(u || "") ? u : "";
+const formShareText = f => (f.message ? f.message.trim() + "\n" : "") + f.url;
+function vForms() {
+  const list = [...(S.forms || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const head = `<div class="bar"><h2>フォーム</h2>${canManage() ? `<button class="btn" type="button" data-act="form-new">フォームを追加</button>` : ""}</div>
+    <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">新入生や参加者に送るGoogleフォームのリンク集です。「案内文をコピー」でLINEやインスタのDMに貼り付けて送れます。</p>`;
+  if (!list.length) return head + `<div class="empty"><p>まだフォームが登録されていません。</p>${canManage() ? `<button class="btn small" type="button" data-act="form-new">最初のフォームを追加</button>` : `<p class="muted">管理者が追加すると、ここに表示されます。</p>`}</div>`;
+  return head + `<div class="form-grid">${list.map((f, i) => `<article class="panel form-card">
+      <div class="fc-head"><h3>${esc(f.name)}</h3>${canManage() ? `<span class="fc-tools"><button class="icon-btn" type="button" data-act="form-up" data-id="${esc(f.id)}" aria-label="上へ" ${i === 0 ? "disabled" : ""}>↑</button><button class="icon-btn" type="button" data-act="form-down" data-id="${esc(f.id)}" aria-label="下へ" ${i === list.length - 1 ? "disabled" : ""}>↓</button><button class="link" type="button" data-act="form-edit" data-id="${esc(f.id)}">編集</button></span>` : ""}</div>
+      ${f.desc ? `<p class="fc-desc">${esc(f.desc)}</p>` : ""}
+      ${f.message ? `<div class="fc-msg"><span class="lbl">送るときの文面</span><p>${esc(f.message)}</p></div>` : ""}
+      <div class="fc-url">${esc(f.url)}</div>
+      <div class="fc-acts"><button class="btn" type="button" data-act="form-copy" data-id="${esc(f.id)}">${f.message ? "案内文をコピー" : "リンクをコピー"}</button>${f.message ? `<button class="btn sec" type="button" data-act="form-copy-url" data-id="${esc(f.id)}">リンクだけ</button>` : ""}<a class="btn sec" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">開く</a>${canManage() && safeUrl(f.respUrl) ? `<a class="link" href="${esc(safeUrl(f.respUrl))}" target="_blank" rel="noopener">回答を見る</a>` : ""}</div>
+    </article>`).join("")}</div>`;
+}
+function formDialog(fm) {
+  const v = fm || { name: "", url: "", desc: "", message: "", respUrl: "" };
+  const body = fld("フォームの名前", `<input name="name" id="f-name" required value="${esc(v.name)}" placeholder="例：体験参加申込フォーム">`, { full: true, req: true }) +
+    fld("フォームのURL", `<input name="url" id="f-url" type="url" required value="${esc(v.url)}" placeholder="https://forms.gle/…">`, { full: true, req: true, help: "Googleフォームの「送信」→リンクのアイコンで出るURL（短縮URLでOK）" }) +
+    fld("説明（運営向けメモ）", `<input name="desc" id="f-desc" value="${esc(v.desc || "")}" placeholder="例：体験会の申込受付用。毎回の告知で使う">`, { full: true }) +
+    fld("送るときの文面（任意）", `<textarea name="message" id="f-message" placeholder="例：体験会のお申し込みはこちらからお願いします！">${esc(v.message || "")}</textarea>`, { full: true, help: "入れておくと「案内文をコピー」で、この文面とURLがまとめてコピーされます" }) +
+    fld("回答を見るURL（任意）", `<input name="respUrl" id="f-respUrl" type="url" value="${esc(v.respUrl || "")}" placeholder="回答のスプレッドシートやフォームの編集画面のURL">`, { full: true, help: "管理者・副管理者だけに「回答を見る」として表示されます" });
+  openDlg(fm ? "フォームを編集" : "フォームを追加", body, {
+    submit: async f => {
+      const url = (f.url || "").trim(), respUrl = (f.respUrl || "").trim();
+      if (!safeUrl(url)) return showErr("URLは https:// から始まる形で入れてください。"), false;
+      if (respUrl && !safeUrl(respUrl)) return showErr("回答を見るURLは https:// から始まる形で入れてください。"), false;
+      const data = { name: f.name.trim(), url, desc: f.desc.trim(), message: f.message.trim(), respUrl };
+      if (!data.name) return showErr("フォームの名前を入力してください。"), false;
+      if (fm) await updateDoc(doc(db, "forms", fm.id), data);
+      else { data.order = Date.now(); data.createdAt = serverTimestamp(); await addDoc(collection(db, "forms"), data); S.anim = "in"; }
+    },
+    del: fm ? () => deleteDoc(doc(db, "forms", fm.id)) : null
+  });
+}
+async function moveForm(id, dir) {
+  const list = [...(S.forms || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const i = list.findIndex(f => f.id === id), j = i + dir; if (i < 0 || j < 0 || j >= list.length) return;
+  const b = writeBatch(db); const oi = list[i].order || i, oj = list[j].order || j;
+  b.update(doc(db, "forms", list[i].id), { order: oj === oi ? oi + dir : oj }); b.update(doc(db, "forms", list[j].id), { order: oi });
+  await b.commit();
+}
+async function copyPlain(t, msg) {
+  try { await navigator.clipboard.writeText(t); toast(msg); }
+  catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast(msg); } catch (_) { toast("コピーできませんでした", "error"); } ta.remove(); }
 }
 function vMembers() {
   const list = [...S.members].sort((a, b) => ({ pending: 0, active: 1, inactive: 2 }[a.status] ?? 3) - ({ pending: 0, active: 1, inactive: 2 }[b.status] ?? 3) || (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
@@ -684,8 +762,10 @@ const readShare = (f, name) => { if (f[name + "_all"]) return ["all"]; const v =
 
 function kpiDialog(k, preset) {
   const v = k || Object.assign({ month: S.kpiMonth, mode: "sum", unit: "人", owner: uid(), viewers: ["all"] }, preset || {});
+  const trk = isTrack(v);
   const body = fld("指標名", `<input name="name" id="f-name" required value="${esc(v.name || "")}" placeholder="例：体験参加者数">`, { full: true, req: true }) +
-    fld("月次目標", `<input name="target" id="f-target" type="number" step="any" min="0" required value="${esc(v.target ?? "")}">`, { req: true }) +
+    `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="track" id="f-track" value="1" ${trk ? "checked" : ""}>目標を立てずに記録だけする（フォロワー数など。達成率とゲージを出さず、前回からの増減を表示）</label></div>` +
+    `<div class="field" id="target-field"><span class="lbl">月次目標<span class="req">必須</span></span><input name="target" id="f-target" type="number" step="any" min="0" value="${esc(v.target ?? "")}"></div>` +
     fld("単位", `<input name="unit" id="f-unit" value="${esc(v.unit || "")}" placeholder="人・回・件">`) +
     fld("集計方法", sel("mode", [["sum", "合計（MTG・月末ごとに、前回から増えた分を入力）"], ["latest", "最新値（MTG・月末時点の数値を入力）"]], v.mode), { full: true }) +
     fld("担当者", sel("owner", memberOpts(), v.owner), { help: "MTGと月末に進捗を入力する人" }) +
@@ -693,7 +773,9 @@ function kpiDialog(k, preset) {
     shareBox("viewers", v.viewers, "担当者には常に表示されます。表示できない人には、このKPIのデータ自体が送られません。");
   openDlg(k ? "KPIを編集" : "KPIを追加", body, {
     submit: async f => {
-      const data = { name: f.name.trim(), target: Number(f.target), unit: f.unit.trim(), mode: f.mode, owner: f.owner, month: f.month, viewers: readShare(f, "viewers") };
+      const track = !!f.track;
+      if (!track && (f.target === "" || !(Number(f.target) >= 0))) return showErr("月次目標を入力してください（記録だけの指標なら、上のチェックを入れてください）。"), false;
+      const data = { name: f.name.trim(), track, target: track ? null : Number(f.target), unit: f.unit.trim(), mode: f.mode, owner: f.owner, month: f.month, viewers: readShare(f, "viewers") };
       if (!data.name) return showErr("指標名を入力してください。"), false;
       if (!data.viewers.includes("all") && !data.viewers.includes(data.owner)) data.viewers.push(data.owner);
       if (k) await updateDoc(doc(db, "kpis", k.id), data);
@@ -702,6 +784,9 @@ function kpiDialog(k, preset) {
     del: k ? () => deleteDoc(doc(db, "kpis", k.id)) : null
   });
   wireShare("viewers");
+  const tc = form.querySelector("#f-track"), tf = form.querySelector("#target-field");
+  const syncT = () => { tf.hidden = tc.checked; if (tc.checked) form.querySelector("#f-mode").value = "latest"; };
+  tc.addEventListener("change", syncT); syncT();
 }
 
 function taskDialog(t, date) {
@@ -881,8 +966,8 @@ function importDialog() {
 /* ================= events ================= */
 document.addEventListener("click", async e => {
   const tab = e.target.closest("#tabs [data-tab]"); if (tab) {
-    if (S.tab === "settings" && S.settingsDirty && tab.dataset.tab !== "settings" && !S.leaveArmed) { S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します", "warn"); setTimeout(() => S.leaveArmed = false, 4000); return; }
-    if (tab.dataset.tab !== "settings") S.settingsDirty = false;
+    if (S.tab === "admin" && S.adminSub === "settings" && S.settingsDirty && tab.dataset.tab !== "admin" && !S.leaveArmed) { S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します", "warn"); setTimeout(() => S.leaveArmed = false, 4000); return; }
+    if (tab.dataset.tab !== "admin") S.settingsDirty = false;
     if (S.tab !== tab.dataset.tab) S.anim = "in";
     S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } render(); window.scrollTo(0, 0); return; }
   const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) {
@@ -905,7 +990,7 @@ document.addEventListener("click", async e => {
   }
   if (act === "kpi-carry") {
     const prev = S.kpis.filter(k => k.month === shiftMonth(S.kpiMonth, -1));
-    try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, target: k.target, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err), "error"); }
+    try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, track: isTrack(k), target: k.target ?? null, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err), "error"); }
     return;
   }
   if (act === "task-new") { if (!canWrite()) return; return taskDialog(null, a.dataset.d); }
@@ -915,6 +1000,11 @@ document.addEventListener("click", async e => {
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
   if (act === "inv-new") return inviteDialog();
+  if (act === "form-new") return formDialog(null);
+  if (act === "form-edit") return formDialog((S.forms || []).find(f => f.id === id));
+  if (act === "form-copy") { const f = (S.forms || []).find(x => x.id === id); if (f) copyPlain(formShareText(f), f.message ? "案内文をコピーしました" : "リンクをコピーしました"); return; }
+  if (act === "form-copy-url") { const f = (S.forms || []).find(x => x.id === id); if (f) copyPlain(f.url, "リンクをコピーしました"); return; }
+  if (act === "form-up" || act === "form-down") { try { await moveForm(id, act === "form-up" ? -1 : 1); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "inv-copy") { const iv = (S.invites || []).find(x => x.id === id); return copyText(inviteText(iv && iv.name)); }
   if (act === "inv-del") {
     if (S.armDel !== "inv:" + id) { S.armDel = "inv:" + id; render(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; render(); }, 5000); return; }
@@ -933,6 +1023,10 @@ document.addEventListener("keydown", e => { if (e.key === "Enter") { const r = e
 document.addEventListener("change", async e => {
   const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) return;
   const act = a.dataset.act, id = a.dataset.id;
+  if (act === "adm-sub") {
+    if (S.adminSub === "settings" && S.settingsDirty && a.value !== "settings" && !S.leaveArmed) { a.checked = false; document.getElementById("adm-settings").checked = true; S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します", "warn"); setTimeout(() => S.leaveArmed = false, 4000); return; }
+    S.settingsDirty = false; S.adminSub = a.value; S.anim = "in"; try { history.replaceState(null, "", "#" + a.value); } catch (_) { } render(); return;
+  }
   if (act === "onlymine") { S.onlyMine = a.checked; ls.set("cb_onlymine", a.checked ? "1" : "0"); render(); return; }
   try {
     if (act === "task-done") {
@@ -978,5 +1072,5 @@ document.addEventListener("keydown", e => {
   if (e.key === "ArrowDown" && row.nextElementSibling) { e.preventDefault(); box.insertBefore(row.nextElementSibling, row); handle.focus(); markDirty(); }
 });
 
-const h0 = (location.hash || "").slice(1); if (TABS_ALL.some(([k]) => k === h0)) S.tab = h0;
+let h0 = (location.hash || "").slice(1); if (h0 === "members" || h0 === "settings") { S.adminSub = h0; h0 = "admin"; } if (TABS_ALL.some(([k]) => k === h0)) S.tab = h0;
 render();
