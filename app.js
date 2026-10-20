@@ -768,11 +768,18 @@ form.addEventListener("submit", async e => {
 const sel = (name, list, val) => `<select name="${name}" id="f-${name}">${list.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
 const fld = (label, inner, { full, req, help } = {}) => `<div class="field${full ? " full" : ""}"><span class="lbl">${esc(label)}${req ? `<span class="req">必須</span>` : ""}</span>${inner}${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
 const memberOpts = () => activeMembers().map(m => [m.id, m.name || m.email]);
+/* メンバー選択はすべて同じ「色付きチップ」で選ぶ（multi=複数選択、false=1人だけ） */
+function memberChips(name, selected, { multi = true, byName = false, extra = [] } = {}) {
+  const type = multi ? "checkbox" : "radio";
+  const items = activeMembers().map(m => ({ v: byName ? (m.name || m.email) : m.id, label: m.name || m.email, color: mColor(m.id) }));
+  extra.forEach(n => { if (n && !items.some(x => x.v === n)) items.push({ v: n, label: n, color: "var(--muted)" }); });
+  return `<div class="pick-chips" role="${multi ? "group" : "radiogroup"}">${items.map((x, i) => `<label class="pchip" style="--mc:${x.color}"><input type="${type}" name="${name}" id="f-${name}-${i}" value="${esc(x.v)}" ${selected.includes(x.v) ? "checked" : ""}><span><i></i>${esc(x.label)}</span></label>`).join("")}</div>`;
+}
 function shareBox(name, current, help) {
   const all = !current || !current.length || current.includes("all");
-  return `<div class="field full"><span class="lbl">${name === "viewers" ? "表示できる人" : "共有する人"}</span><div class="checks">
-    <label><input type="checkbox" name="${name}_all" id="f-${name}_all" ${all ? "checked" : ""}>全員</label>
-    ${activeMembers().map((m, i) => `<label><input type="checkbox" name="${name}" id="f-${name}-${i}" value="${esc(m.id)}" ${!all && current.includes(m.id) ? "checked" : ""} ${all ? "disabled" : ""}>${esc(m.name || m.email)}</label>`).join("")}
+  return `<div class="field full"><span class="lbl">${name === "viewers" ? "表示できる人" : "共有する人"}</span><div class="pick-chips">
+    <label class="pchip pchip-all" style="--mc:var(--navy)"><input type="checkbox" name="${name}_all" id="f-${name}_all" ${all ? "checked" : ""}><span><i></i>全員</span></label>
+    ${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="${name}" id="f-${name}-${i}" value="${esc(m.id)}" ${!all && current.includes(m.id) ? "checked" : ""} ${all ? "disabled" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}
   </div>${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
 }
 function wireShare(name) {
@@ -789,11 +796,12 @@ function kpiDialog(k, preset) {
     `<div class="field" id="target-field"><span class="lbl">月次目標<span class="req" id="target-req">必須</span><span class="muted" id="target-opt" style="font-weight:400;margin-left:4px">（任意）</span></span><input name="target" id="f-target" type="number" step="any" min="0" value="${esc(v.target ?? "")}"></div>` +
     fld("単位", `<input name="unit" id="f-unit" value="${esc(v.unit || "")}" placeholder="人・回・件">`) +
     fld("集計方法", sel("mode", [["sum", "合計（MTG・月末ごとに、前回から増えた分を入力）"], ["latest", "最新値（MTG・月末時点の数値を入力）"]], v.mode), { full: true }) +
-    fld("担当者", sel("owner", memberOpts(), v.owner), { help: "MTGと月末に進捗を入力する人" }) +
+    fld("担当者", memberChips("owner", [v.owner], { multi: false }), { full: true, help: "MTGと月末に進捗を入力する人（1人）" }) +
     fld("対象月", `<input name="month" id="f-month" type="month" required value="${esc(v.month)}">`, { req: true }) +
     shareBox("viewers", v.viewers, "担当者には常に表示されます。表示できない人には、このKPIのデータ自体が送られません。");
   openDlg(k ? "KPIを編集" : "KPIを追加", body, {
     submit: async f => {
+      if (!f.owner) return showErr("担当者を選んでください。"), false;
       const track = !!f.track;
       if (!track && (f.target === "" || !(Number(f.target) >= 0))) return showErr("月次目標を入力してください（記録のみの指標なら、上のチェックを入れると目標は任意になります）。"), false;
       const data = { name: f.name.trim(), track, target: f.target === "" ? null : Number(f.target), unit: f.unit.trim(), mode: f.mode, owner: f.owner, month: f.month, viewers: readShare(f, "viewers") };
@@ -958,13 +966,13 @@ function ledDialog(r) {
     fld("区分", sel("type", ["収入", "支出"], v.type)) + fld("カテゴリ", sel("category", catList(v.type), v.category)) +
     fld("金額（円）", `<input name="amount" id="f-amount" type="number" min="0" step="1" required value="${esc(v.amount)}">`, { req: true }) +
     fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true }) +
-    fld("担当者", sel("owner", ownerList, v.owner)) + fld("支払方法", sel("method", c.methods, v.method)) +
+    fld("担当者", memberChips("owner", [v.owner], { multi: false, byName: true, extra: [v.owner] }), { full: true }) + fld("支払方法", sel("method", c.methods, v.method)) +
     fld("精算", sel("settled", ["未精算", "精算済", "対象外"], v.settled), { help: "立替払いは「未精算」、返金したら「精算済」" }) +
     fld("メモ", `<textarea name="memo" id="f-memo">${esc(v.memo || "")}</textarea>`, { full: true });
   openDlg(r ? "収支を編集" : "収支を記録", body, {
     submit: async f => {
       const amt = Number(f.amount); if (!(amt >= 0)) return showErr("金額を数字で入力してください。"), false;
-      const data = { title: f.title.trim(), type: f.type, category: f.category, amount: amt, date: f.date, owner: f.owner, method: f.method, settled: f.settled, memo: f.memo.trim() };
+      const data = { title: f.title.trim(), type: f.type, category: f.category, amount: amt, date: f.date, owner: f.owner || "", method: f.method, settled: f.settled, memo: f.memo.trim() };
       if (r) await updateDoc(doc(db, "ledger", r.id), data);
       else { data.createdAt = serverTimestamp(); await addDoc(collection(db, "ledger"), data); memSet("last_led", { type: data.type, category: data.category, owner: data.owner, method: data.method, settled: data.settled }); }
       S.moneyMonth = f.date.slice(0, 7);

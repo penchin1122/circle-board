@@ -504,3 +504,10 @@ body.menu-open{overflow:hidden}
 .task.issue .time{font-size:.78rem;font-weight:700}
 .done-toggle{margin-top:12px;display:inline-block}
 .done-list{margin-top:6px;opacity:.85}
+
+/* メンバーのチップ：1人だけ選ぶ所・「全員」・選べない状態 */
+.pchip input:disabled + span{opacity:.4;cursor:not-allowed}
+.pchip input:disabled + span:hover{border-color:var(--line)}
+.pchip-all span i{background:conic-gradient(var(--m1) 0 25%,var(--m2) 0 50%,var(--m3) 0 75%,var(--m4) 0)}
+label.checks{flex-wrap:nowrap;align-items:flex-start;white-space:normal;gap:8px}
+label.checks input{margin-top:.3em;flex:none}
