@@ -24,10 +24,12 @@ const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
 // 定例ミーティング：毎月 第2・第4木曜日。KPIの進捗はこの2回の時点で入力する
 function meetingsOfMonth(m) {
   const first = parse(m + "-01"); const off = (4 - first.getDay() + 7) % 7; // 最初の木曜日
-  return [8, 22].map(n => ymd(new Date(first.getFullYear(), first.getMonth(), 1 + off + (n === 8 ? 7 : 21))));
+  const y = first.getFullYear(), mo = first.getMonth();
+  return [ymd(new Date(y, mo, 1 + off + 7)), ymd(new Date(y, mo, 1 + off + 21)), ymd(new Date(y, mo + 1, 0))]; // 第2木・第4木・月末
 }
 const NEXTMTG = [...meetingsOfMonth(THISMONTH), ...meetingsOfMonth(shiftMonth(THISMONTH, 1))].find(x => x >= TODAY);
-const mtgLabel = d => { const mt = meetingsOfMonth(d.slice(0, 7)); return (mt[0] === d ? "第2木" : "第4木"); };
+const mtgLabel = d => { const mt = meetingsOfMonth(d.slice(0, 7)); return mt[0] === d ? "第2木" : mt[1] === d ? "第4木" : "月末"; };
+const mtgName = d => mtgLabel(d) === "月末" ? "月末" : "MTG";
 const ls = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
 /* トースト：type = "success" | "error" | "info" | "warn"。最大3件まで重ねて表示 */
 const TOAST_ICON = {
@@ -197,15 +199,19 @@ function kpiRow(k, withEdit) {
     <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : ""}</div>
     <div class="nums">${s.t > 0 ? `<b>${cu(s.a.v, "num")}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
-    <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTGごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
+    <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTG・月末ごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
   </div>`;
 }
 
 /* ================= task helpers ================= */
 const sharedAll = t => !t.shareWith || !t.shareWith.length || t.shareWith.includes("all");
-const relevant = t => sharedAll(t) || t.owner === uid() || (t.shareWith || []).includes(uid()) || t.createdBy === uid();
+const ownersOf = t => (Array.isArray(t.owners) && t.owners.length ? t.owners : (t.owner ? [t.owner] : []));
+const isMine = t => ownersOf(t).includes(uid());
+const whoTags = t => ownersOf(t).map(whoTag).join(" ") || `<span class="muted" style="font-size:.8rem">担当未定</span>`;
+const ownerDots = t => ownersOf(t).map(o => `<i class="od" style="--mc:${mColor(o)}"></i>`).join("");
+const relevant = t => sharedAll(t) || isMine(t) || (t.shareWith || []).includes(uid()) || t.createdBy === uid();
 const canEditTask = t => S.isAdmin || t.createdBy === uid();
-const canToggleTask = t => canEditTask(t) || t.owner === uid();
+const canToggleTask = t => canEditTask(t) || isMine(t);
 const taskTitle = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "（内容未記入）");
 const timeLabel = t => !t.start ? "終日" : esc(t.start) + (t.end ? "–" + esc(t.end) : "〜");
 const sortTasks = (a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || ""));
@@ -213,9 +219,9 @@ function taskItem(t, opts = {}) {
   const sw = sharedAll(t) ? "全員に共有" : "共有：" + t.shareWith.map(memName).join("・");
   const late = opts.late ? `<span class="pill bad">${daysBetween(t.date, TODAY)}日遅れ</span> ` : "";
   const sub = [opts.showDate ? md(t.date) : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
-  return `<div class="task${t.done ? " done" : ""}" style="--mc:${mColor(t.owner)}">
+  return `<div class="task${t.done ? " done" : ""}" style="--mc:${mColor(ownersOf(t)[0])}">
     <div class="time">${timeLabel(t)}</div>
-    <div><div class="what">${late}${esc(taskTitle(t))}</div>${whoTag(t.owner)}</div>
+    <div><div class="what">${late}${esc(taskTitle(t))}</div><div class="whos">${whoTags(t)}</div></div>
     <div class="acts">${canToggleTask(t) ? `<label><input type="checkbox" data-act="task-done" data-id="${esc(t.id)}" ${t.done ? "checked" : ""}>完了</label>` : (t.done ? `<span class="pill good">完了</span>` : "")}<button class="link" type="button" data-act="task-open" data-id="${esc(t.id)}">${canEditTask(t) ? "編集" : "詳細"}</button></div>
     <div class="sub">${esc(sub)}</div>
   </div>`;
@@ -329,10 +335,10 @@ function skeleton(tab) {
 function monthNav(key) { return `<div class="monthnav"><button type="button" data-act="mprev" data-k="${key}" aria-label="前の月">‹</button><span>${monthLabel(S[key])}</span><button type="button" data-act="mnext" data-k="${key}" aria-label="次の月">›</button></div>`; }
 
 function vHome() {
-  const mine = S.tasks.filter(t => t.date === TODAY && (t.owner === uid() || sharedAll(t) || (t.shareWith || []).includes(uid()))).sort(sortTasks);
+  const mine = S.tasks.filter(t => t.date === TODAY && (isMine(t) || sharedAll(t) || (t.shareWith || []).includes(uid()))).sort(sortTasks);
   const myOpen = mine.filter(t => !t.done).length;
   const overdue = S.tasks.filter(t => sharedAll(t) && !t.done && t.date < TODAY).sort(sortTasks);
-  const myLate = S.tasks.filter(t => !sharedAll(t) && t.owner === uid() && !t.done && t.date < TODAY).sort(sortTasks);
+  const myLate = S.tasks.filter(t => !sharedAll(t) && isMine(t) && !t.done && t.date < TODAY).sort(sortTasks);
   const ks = S.kpis.filter(k => k.month === THISMONTH).sort((a, b) => (a.order || 0) - (b.order || 0));
   const untilMtg = daysBetween(TODAY, NEXTMTG);
   const mtgKpis = S.kpis.filter(k => k.month === NEXTMTG.slice(0, 7));
@@ -352,7 +358,7 @@ function vHome() {
     <div class="stack">
       <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : mine.length ? "すべて完了" : ""}</span></h3>
         ${mine.length ? mine.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">今日の業務はありません。</p>`}
-        ${myKpiNoReport.length ? `<div class="banner" style="margin:12px 0 0">${untilMtg === 0 ? "今日" : untilMtg === 1 ? "明日" : untilMtg + "日後"}のMTG（${md(NEXTMTG)}）までにKPIの報告をお願いします：${myKpiNoReport.map(k => esc(k.name)).join("、")} <button class="link" type="button" data-act="go" data-tab="kpi">入力する</button></div>` : ""}
+        ${myKpiNoReport.length ? `<div class="banner" style="margin:12px 0 0">${untilMtg === 0 ? "今日" : untilMtg === 1 ? "明日" : untilMtg + "日後"}の${mtgName(NEXTMTG) === "月末" ? "月末締め" : "MTG"}（${md(NEXTMTG)}）までにKPIの報告をお願いします：${myKpiNoReport.map(k => esc(k.name)).join("、")} <button class="link" type="button" data-act="go" data-tab="kpi">入力する</button></div>` : ""}
       </section>
       <section class="panel"><h3>未対応（全体共有）<span class="hint">昨日までに完了していない業務 ${overdue.length}件</span></h3>
         ${overdue.length ? overdue.map(t => taskItem(t, { late: true, showDate: true })).join("") : `<p class="muted" style="margin:0">未対応の業務はありません。</p>`}
@@ -383,14 +389,14 @@ function vKpi() {
     const w = k.weekly || {}; const s = kpiStatus(k); const editable = S.isAdmin || k.owner === uid();
     return `<tr><td><b>${esc(k.name)}</b><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}</div></td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
-        return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${md(wk)}のMTG" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
+        return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
       <td class="num"><b>${num(s.a.v)}</b> / ${s.t > 0 ? num(s.t) : "—"}</td><td><span class="pill ${s.st.c}">${s.t > 0 ? Math.round(s.rate * 100) + "%" : "目標未設定"}</span></td></tr>`;
   }).join("");
   return head + `<div class="stack">
     <section class="panel"><h3>月次目標の進捗<span class="hint">縦線は今日時点の目安ペース</span></h3>${ks.map(k => kpiRow(k, true)).join("")}</section>
-    <section><h3 style="font-size:.95rem;margin:0 0 8px">ミーティングごとの進捗</h3>
-      <p class="muted" style="font-size:.82rem;margin:0 0 8px">毎月第2・第4木曜日の定例MTGまでに、各KPIの担当者が実績を入力します。入力すると自動で保存されます。「最新値」はMTG時点の数値（例：会員数）、「合計」は前回のMTGから増えた分を入れてください。第4木曜日より後の分は、翌月の第2木曜日に報告します。</p>
-      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回MTG" : ""}</th>`).join("")}<th class="num">実績 / 目標</th><th>達成率</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <section><h3 style="font-size:.95rem;margin:0 0 8px">ミーティング・月末ごとの進捗</h3>
+      <p class="muted" style="font-size:.82rem;margin:0 0 8px">第2・第4木曜日の定例MTGと月末の3回、各KPIの担当者が実績を入力します。入力すると自動で保存されます。「最新値」はその時点の数値（例：会員数）、「合計」は前回から増えた分を入れてください（第2木＝月初から、第4木＝第2木の翌日から、月末＝第4木の翌日から月末まで）。</p>
+      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回" : ""}</th>`).join("")}<th class="num">実績 / 目標</th><th>達成率</th></tr></thead><tbody>${rows}</tbody></table></div>
     </section></div>`;
 }
 
@@ -398,7 +404,7 @@ function vCal() {
   const m = S.calMonth; const first = parse(m + "-01"); const start = mondayOf(first);
   const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
   const endGrid = new Date(last); endGrid.setDate(endGrid.getDate() + (6 - (last.getDay() + 6) % 7));
-  const vis = S.onlyMine ? S.tasks.filter(t => t.owner === uid() || (t.shareWith || []).includes(uid()) || t.createdBy === uid()) : S.tasks.filter(relevant);
+  const vis = S.onlyMine ? S.tasks.filter(t => isMine(t) || (t.shareWith || []).includes(uid()) || t.createdBy === uid()) : S.tasks.filter(relevant);
   const byDay = {}; vis.forEach(t => { (byDay[t.date] = byDay[t.date] || []).push(t); });
   let cells = ["月", "火", "水", "木", "金", "土", "日"].map(d => `<div class="dow">${d}</div>`).join("");
   for (let d = new Date(start); d <= endGrid; d.setDate(d.getDate() + 1)) {
@@ -406,9 +412,9 @@ function vCal() {
     const cls = ["day", ym(d) !== m ? "out" : "", k === TODAY ? "today" : "", k === S.selDay ? "sel" : ""].join(" ");
     cells += `<button type="button" class="${cls}" data-act="day" data-d="${k}" aria-label="${md(k)} 予定${list.length}件">
       <span class="d"><span>${d.getDate()}</span></span>
-      ${list.slice(0, 3).map(t => `<span class="chip${t.done ? " done" : ""}" style="--mc:${mColor(t.owner)}">${esc(t.start || "")} ${esc(taskTitle(t))}</span>`).join("")}
+      ${list.slice(0, 3).map(t => `<span class="chip${t.done ? " done" : ""}" style="--mc:${mColor(ownersOf(t)[0])}">${ownersOf(t).length > 1 ? `<span class="chip-dots">${ownerDots(t)}</span>` : ""}${esc(t.start || "")} ${esc(taskTitle(t))}</span>`).join("")}
       ${list.length > 3 ? `<span class="more">ほか${list.length - 3}件</span>` : ""}
-      <span class="dots">${list.map(t => `<i style="--mc:${mColor(t.owner)}"></i>`).join("")}</span></button>`;
+      <span class="dots">${list.map(t => `<i style="--mc:${mColor(ownersOf(t)[0])}"></i>`).join("")}</span></button>`;
   }
   const dayList = (byDay[S.selDay] || []).sort(sortTasks);
   return `<div class="bar"><h2>業務カレンダー</h2>
@@ -630,8 +636,8 @@ function kpiDialog(k, preset) {
   const body = fld("指標名", `<input name="name" id="f-name" required value="${esc(v.name || "")}" placeholder="例：体験参加者数">`, { full: true, req: true }) +
     fld("月次目標", `<input name="target" id="f-target" type="number" step="any" min="0" required value="${esc(v.target ?? "")}">`, { req: true }) +
     fld("単位", `<input name="unit" id="f-unit" value="${esc(v.unit || "")}" placeholder="人・回・件">`) +
-    fld("集計方法", sel("mode", [["sum", "MTGごとの合計（前回MTGから増えた分を入力）"], ["latest", "最新値（MTG時点の数値を入力）"]], v.mode), { full: true }) +
-    fld("担当者", sel("owner", memberOpts(), v.owner), { help: "MTGごとに進捗を入力する人" }) +
+    fld("集計方法", sel("mode", [["sum", "合計（MTG・月末ごとに、前回から増えた分を入力）"], ["latest", "最新値（MTG・月末時点の数値を入力）"]], v.mode), { full: true }) +
+    fld("担当者", sel("owner", memberOpts(), v.owner), { help: "MTGと月末に進捗を入力する人" }) +
     fld("対象月", `<input name="month" id="f-month" type="month" required value="${esc(v.month)}">`, { req: true }) +
     shareBox("viewers", v.viewers, "担当者には常に表示されます。表示できない人には、このKPIのデータ自体が送られません。");
   openDlg(k ? "KPIを編集" : "KPIを追加", body, {
@@ -651,13 +657,13 @@ function taskDialog(t, date) {
   const c = cfg();
   if (t && !canEditTask(t)) {
     const sw = sharedAll(t) ? "全員" : t.shareWith.map(memName).join("・");
-    openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${timeLabel(t)}</div>`) + fld("担当者", `<div class="ro">${esc(memName(t.owner))}</div>`) +
+    openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${timeLabel(t)}</div>`) + fld("担当者", `<div class="ro">${esc(ownersOf(t).map(memName).join("・") || "未定")}</div>`) +
       fld("担当業務", `<div class="ro">${esc(taskTitle(t))}</div>`, { full: true }) + (t.detail && t.routine !== "__other" ? fld("内容・メモ", `<div class="ro">${esc(t.detail)}</div>`, { full: true }) : "") +
       fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者です" }), { readOnly: true });
     return;
   }
   const last = memGet("last_task") || {};
-  const v = t || { date: date || S.selDay || TODAY, start: last.start ?? "17:30", end: last.end ?? "19:00", owner: uid(), routine: last.routine && (c.routines.includes(last.routine) || last.routine === "__other") ? last.routine : c.routines[0], detail: "", shareWith: last.shareWith || ["all"] };
+  const v = t || { date: date || S.selDay || TODAY, start: last.start ?? "17:30", end: last.end ?? "19:00", owners: [uid()], routine: last.routine && (c.routines.includes(last.routine) || last.routine === "__other") ? last.routine : c.routines[0], detail: "", shareWith: last.shareWith || ["all"] };
   const isOther = v.routine === "__other" || (v.routine && !c.routines.includes(v.routine));
   const routineOpts = [...c.routines.map(r => [r, r]), ...(isOther && v.routine !== "__other" ? [[v.routine, v.routine]] : []), ["__other", "その他（下に記述）"]];
   const dateField = t
@@ -670,7 +676,7 @@ function taskDialog(t, date) {
           <span class="help">日付をタップして選びます（もう一度タップで解除）。時間・担当・内容は、選んだすべての日に同じものが入ります。</span></div>
       </div>`;
   const body = dateField +
-    fld("担当者", sel("owner", memberOpts(), v.owner)) +
+    `<div class="field full"><span class="lbl">担当者<span class="req">必須</span></span><div class="pick-chips" role="group" aria-label="担当者（複数選べます）">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-owner-${i}" value="${esc(m.id)}" ${ownersOf(v).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div><span class="help">複数選べます。選んだ全員のホームと朝の通知に出ます。</span></div>` +
     `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="allday" id="f-allday" value="1" ${t ? (!t.start ? "checked" : "") : (v.start ? "" : "checked")}>時間を決めない（終日・時間未定）</label></div>` +
     fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`) +
     fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "決まっていなければ空欄でOK" }) +
@@ -687,7 +693,9 @@ function taskDialog(t, date) {
       const dates = multi ? (f.dates || "").split(",").filter(Boolean).sort() : [f.date];
       if (!dates.length || !dates[0]) return showErr(multi ? "日付を1日以上選んでください。" : "日付を入力してください。"), false;
       if (dates.length > 31) return showErr("一度に登録できるのは31日分までです。"), false;
-      const data = { date: dates[0], start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
+      const owners = f.__fd.getAll("owners");
+      if (!owners.length) return showErr("担当者を1人以上選んでください。"), false;
+      const data = { date: dates[0], start, end, owner: owners[0], owners, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
       if (t) await updateDoc(doc(db, "tasks", t.id), data);
       else {
         Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() });

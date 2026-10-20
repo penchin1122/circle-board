@@ -26,7 +26,8 @@ export function buildMessages(tasks, today) {
   const label = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "業務");
   const time = t => !t.start ? "終日" : t.start + (t.end ? "–" + t.end : "〜");
   const by = {};
-  tasks.filter(t => t.date === today && !t.done && t.owner).forEach(t => (by[t.owner] = by[t.owner] || []).push(t));
+  const ownersOf = t => (Array.isArray(t.owners) && t.owners.length ? t.owners : (t.owner ? [t.owner] : []));
+  tasks.filter(t => t.date === today && !t.done).forEach(t => ownersOf(t).forEach(o => (by[o] = by[o] || []).push(t)));
   return Object.entries(by).map(([owner, list]) => {
     list.sort((a, b) => (a.start || "").localeCompare(b.start || ""));
     const body = list.map(t => `${time(t)} ${label(t)}`).join("\n");
