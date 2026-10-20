@@ -114,7 +114,8 @@ td input.name-in{width:9em;padding:4px 6px;border:1px solid var(--line);border-r
 .cal .day.sel{box-shadow:inset 0 0 0 2px var(--accent)}
 .cal .d{font-size:.8rem;font-weight:700;line-height:1.6}
 .cal .day.today .d span{background:var(--accent);color:var(--accent-fg);border-radius:999px;padding:0 6px}
-.chip{display:block;font-size:.72rem;line-height:1.5;padding:1px 5px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface-2);background:color-mix(in srgb,var(--mc,var(--accent)) 14%,#FFFFFF);color:var(--fg);border-left:3px solid var(--mc,var(--accent))}
+.chip{display:block;font-size:.72rem;line-height:1.5;padding:1px 6px 1px 5px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--surface-2);background:color-mix(in srgb,var(--mc,var(--accent)) 14%,#FFFFFF);color:var(--fg)}
+.chip::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--mc,var(--accent));margin-right:4px;vertical-align:1px}
 .chip.done{opacity:.5;text-decoration:line-through}
 .more{font-size:.7rem;color:var(--muted)}
 .dots{display:none;gap:3px;flex-wrap:wrap}
@@ -191,7 +192,7 @@ dialog::backdrop{background:rgba(8,18,38,.55)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 
 /* 担当者の色 */
-.task{border-left:3px solid var(--mc,transparent);padding-left:10px}
+.task{padding-left:0}
 .swatches{display:flex;gap:6px;flex-wrap:wrap}
 .swatch{width:22px;height:22px;border-radius:50%;border:2px solid #FFFFFF;box-shadow:0 0 0 1px var(--line);cursor:pointer;padding:0}
 .swatch[aria-pressed="true"]{box-shadow:0 0 0 2px var(--fg)}
@@ -291,7 +292,7 @@ nav.tabs button{transition:color .2s}
 .cal .day.sel{animation:sel-ring .3s var(--ease-out)}
 @keyframes sel-ring{from{box-shadow:inset 0 0 0 6px color-mix(in srgb,var(--accent) 25%,transparent)}to{box-shadow:inset 0 0 0 2px var(--accent)}}
 .chip{transition:transform .15s}
-.cal .day:hover .chip{transform:translateX(2px)}
+
 
 /* 完了チェック：取り消し線が左から引かれる */
 .task .what{background:linear-gradient(currentColor,currentColor) left 55%/0% 1.5px no-repeat;transition:background-size .35s var(--ease-out),color .3s}
