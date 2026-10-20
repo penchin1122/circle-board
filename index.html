@@ -21,6 +21,7 @@
 <header class="mast">
   <div class="wrap">
     <div class="mast-top">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="メニューを開く" aria-controls="drawer" aria-expanded="false" hidden><span></span><span></span><span></span></button>
       <img class="logo" src="logo-mark.png" alt="" width="48" height="35">
       <div>
         <h1><span class="hide-sm">明治</span>就活サークル 運営ボード</h1>
@@ -28,9 +29,14 @@
       </div>
       <div class="mast-tools" id="mast-tools"></div>
     </div>
-    <nav class="tabs" role="tablist" id="tabs"></nav>
   </div>
 </header>
+<div class="drawer-bg" id="drawer-bg"></div>
+<aside class="drawer" id="drawer" aria-label="メニュー" inert>
+  <div class="drawer-head"><img src="logo-mark.png" alt="" width="34" height="25"><b>運営ボード</b><button class="drawer-x" type="button" data-menu="close" aria-label="メニューを閉じる">×</button></div>
+  <nav class="drawer-nav" id="tabs" aria-label="ページ"></nav>
+  <div class="drawer-foot" id="drawer-foot"></div>
+</aside>
 <main class="wrap" id="main">
   <div class="sk-wrap" role="status" aria-label="読み込み中">
     <div class="bar"><span class="sk" style="width:8em;height:24px"></span></div>
