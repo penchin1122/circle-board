@@ -97,6 +97,15 @@ let memberUnsub = null, dataUnsubs = [];
 const cfg = () => Object.assign({}, DEFAULTS, S.config || {});
 const uid = () => S.user && S.user.uid;
 const isActive = () => S.isAdmin || (S.member && S.member.status === "active");
+const ROLES = [["sub", "副管理者"], ["member", "メンバー"], ["viewer", "閲覧のみ"]];
+const ROLE_HELP = { sub: "KPIの設定・すべての業務の編集ができる", member: "業務の登録と、自分の担当KPIの入力ができる", viewer: "見るだけ（登録・入力はできない）" };
+const roleOf = m => (m && ROLES.some(([k]) => k === m.role)) ? m.role : "member";
+const myRole = () => S.isAdmin ? "admin" : roleOf(S.member);
+const isSub = () => myRole() === "sub";
+const canManage = () => S.isAdmin || isSub();          // KPIの設定・すべての業務の編集
+const canWrite = () => myRole() !== "viewer";          // 業務の登録・自分の担当分の入力
+const roleLabel = r => ({ admin: "管理者", sub: "副管理者", member: "メンバー", viewer: "閲覧のみ" })[r] || "メンバー";
+const rolePill = r => r === "member" ? "" : `<span class="pill ${r === "viewer" ? "plain" : "info"}">${roleLabel(r)}</span>`;
 const canFinance = () => S.isAdmin || (isActive() && S.member && S.member.finance === true);
 const activeMembers = () => S.members.filter(m => m.status === "active").sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
 const memName = id => { const m = S.members.find(x => x.id === id); return m ? (m.name || m.email || "名前未設定") : "（不明）"; };
@@ -129,13 +138,13 @@ if (configured) {
         if (!S.isAdmin && u.email) { try { const is = await getDoc(doc(db, "invites", u.email.toLowerCase())); if (is.exists()) inv = is.data(); } catch (e) { } }
         const base = { email: u.email || "", createdAt: serverTimestamp() };
         if (S.isAdmin) await setDoc(ref, { ...base, name: u.displayName || u.email || "", status: "active", finance: true });
-        else if (inv) await setDoc(ref, { ...base, name: inv.name, status: "active", finance: !!inv.finance, ...(inv.color ? { color: inv.color } : {}) });
+        else if (inv) await setDoc(ref, { ...base, name: inv.name, status: "active", finance: !!inv.finance, role: roleOf(inv), ...(inv.color ? { color: inv.color } : {}) });
         else await setDoc(ref, { ...base, name: u.displayName || u.email || "", status: "pending", finance: false });
       }
     } catch (e) { S.fatal = errMsg(e); render(); return; }
     memberUnsub = onSnapshot(ref, s => {
       S.member = s.exists() ? s.data() : null;
-      const key = isActive() ? "on|" + (canFinance() ? "f" : "-") : "off";
+      const key = isActive() ? "on|" + (canFinance() ? "f" : "-") + "|" + myRole() : "off";
       if (key !== S.dataKey) { stopData(); S.dataKey = key; if (key !== "off") startData(); }
       render();
     }, e => { S.fatal = errMsg(e); render(); });
@@ -153,7 +162,7 @@ function startData() {
   listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
   listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
   if (S.isAdmin) listen("invites", collection(db, "invites"), s => S.invites = docsOf(s));
-  if (S.isAdmin) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
+  if (canManage()) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
   else {
     // 一般メンバーは「全員に公開」「自分に公開」「自分が担当」のKPIだけを取得（ルール上それ以外は読めない）
     const parts = {};
@@ -203,10 +212,10 @@ function kpiRow(k, withEdit) {
   const cls = s.st.c === "good" ? "good" : (s.st.c === "warn" || s.st.c === "bad") ? "warn" : "";
   const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
   return `<div class="kpi">
-    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : ""}</div>
+    <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && canManage() ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : ""}</div>
     <div class="nums">${s.t > 0 ? `<b>${cu(s.a.v, "num")}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
-    <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTG・月末ごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
+    <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTG・月末ごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${canManage() ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
   </div>`;
 }
 
@@ -217,8 +226,8 @@ const isMine = t => ownersOf(t).includes(uid());
 const whoTags = t => ownersOf(t).map(whoTag).join(" ") || `<span class="muted" style="font-size:.8rem">担当未定</span>`;
 const ownerDots = t => ownersOf(t).map(o => `<i class="od" style="--mc:${mColor(o)}"></i>`).join("");
 const relevant = t => sharedAll(t) || isMine(t) || (t.shareWith || []).includes(uid()) || t.createdBy === uid();
-const canEditTask = t => S.isAdmin || t.createdBy === uid();
-const canToggleTask = t => canEditTask(t) || isMine(t);
+const canEditTask = t => canManage() || (t.createdBy === uid() && canWrite());
+const canToggleTask = t => canEditTask(t) || (isMine(t) && canWrite());
 const taskTitle = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "（内容未記入）");
 const timeLabel = t => !t.start ? "終日" : esc(t.start) + (t.end ? "–" + esc(t.end) : "〜");
 const sortTasks = (a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || ""));
@@ -273,7 +282,7 @@ function renderChrome() {
   const pending = S.isAdmin ? S.members.filter(m => m.status === "pending").length : 0;
   tabs.innerHTML = vis.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${k === S.tab}">${l}${k === "members" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
   placeTabInd();
-  tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${S.isAdmin ? "（管理者）" : ""}</span><button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
+  tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${myRole() === "member" ? "" : "（" + roleLabel(myRole()) + "）"}</span><button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
 }
 function render() {
   renderChrome();
@@ -349,7 +358,7 @@ function vHome() {
   const ks = S.kpis.filter(k => k.month === THISMONTH).sort((a, b) => (a.order || 0) - (b.order || 0));
   const untilMtg = daysBetween(TODAY, NEXTMTG);
   const mtgKpis = S.kpis.filter(k => k.month === NEXTMTG.slice(0, 7));
-  const myKpiNoReport = untilMtg <= 7 ? mtgKpis.filter(k => k.owner === uid() && !((k.weekly || {})[NEXTMTG] && (k.weekly || {})[NEXTMTG].value !== null)) : [];
+  const myKpiNoReport = untilMtg <= 7 && canWrite() ? mtgKpis.filter(k => k.owner === uid() && !((k.weekly || {})[NEXTMTG] && (k.weekly || {})[NEXTMTG].value !== null)) : [];
   let fin = "";
   if (canFinance()) {
     const mrows = S.ledger.filter(r => (r.date || "").startsWith(THISMONTH));
@@ -374,7 +383,7 @@ function vHome() {
     </div>
     <div class="stack">
       <section class="panel"><h3>今月のKPI<button class="link hint" type="button" data-act="go" data-tab="kpi">詳しく見る</button></h3>
-        ${ks.length ? ks.map(k => kpiRow(k, false)).join("") : `<p class="muted" style="margin:0">${S.isAdmin ? "今月のKPIはまだ設定されていません。" : "表示できる今月のKPIはありません。"}</p>`}
+        ${ks.length ? ks.map(k => kpiRow(k, false)).join("") : `<p class="muted" style="margin:0">${canManage() ? "今月のKPIはまだ設定されていません。" : "表示できる今月のKPIはありません。"}</p>`}
       </section>
       ${fin}
     </div>
@@ -384,16 +393,16 @@ function vHome() {
 function vKpi() {
   const m = S.kpiMonth; const ks = S.kpis.filter(k => k.month === m).sort((a, b) => (a.order || 0) - (b.order || 0));
   const weeks = meetingsOfMonth(m); const prev = S.kpis.filter(k => k.month === shiftMonth(m, -1));
-  const head = `<div class="bar"><h2>KPI</h2>${monthNav("kpiMonth")}${S.isAdmin ? `<button class="btn" type="button" data-act="kpi-new">KPIを追加</button>` : ""}</div>`;
+  const head = `<div class="bar"><h2>KPI</h2>${monthNav("kpiMonth")}${canManage() ? `<button class="btn" type="button" data-act="kpi-new">KPIを追加</button>` : ""}</div>`;
   if (!ks.length) {
-    if (!S.isAdmin) return head + `<div class="empty"><p>${monthLabel(m)}に表示できるKPIはありません。</p></div>`;
+    if (!canManage()) return head + `<div class="empty"><p>${monthLabel(m)}に表示できるKPIはありません。</p></div>`;
     return head + `<div class="empty"><p>${monthLabel(m)}の月次目標はまだありません。</p>
       ${prev.length ? `<p><button class="btn sec" type="button" data-act="kpi-carry">先月のKPI（${prev.length}件）を引き継ぐ</button></p>` : ""}
       <p class="muted" style="font-size:.85rem">指標を追加する：</p>
       <div class="tpls">${KPI_TEMPLATES.map((t, i) => `<button class="btn sec small" type="button" data-act="kpi-tpl" data-i="${i}">${esc(t.name)}</button>`).join("")}</div></div>`;
   }
   const rows = ks.map(k => {
-    const w = k.weekly || {}; const s = kpiStatus(k); const editable = S.isAdmin || k.owner === uid();
+    const w = k.weekly || {}; const s = kpiStatus(k); const editable = canManage() || (k.owner === uid() && canWrite());
     return `<tr><td><b>${esc(k.name)}</b><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}</div></td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
         return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
@@ -426,11 +435,11 @@ function vCal() {
   const dayList = (byDay[S.selDay] || []).sort(sortTasks);
   return `<div class="bar"><h2>業務カレンダー</h2>
     <label class="muted" style="font-size:.85rem;display:flex;gap:6px;align-items:center"><input type="checkbox" id="onlymine" data-act="onlymine" ${S.onlyMine ? "checked" : ""}>自分に関係する業務だけ</label>
-    ${monthNav("calMonth")}<button class="btn" type="button" data-act="task-new">業務を登録</button></div>
+    ${monthNav("calMonth")}${canWrite() ? `<button class="btn" type="button" data-act="task-new">業務を登録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
   <div class="callayout">
     <div class="stack"><div class="cal">${cells}</div>
       <div class="legend">${activeMembers().map(m => whoTag(m.id)).join("")}</div></div>
-    <section class="panel day-panel"><h3>${md(S.selDay)}${S.selDay === TODAY ? "　今日" : ""}<button class="btn small" style="margin-left:auto" type="button" data-act="task-new" data-d="${S.selDay}">この日に登録</button></h3>
+    <section class="panel day-panel"><h3>${md(S.selDay)}${S.selDay === TODAY ? "　今日" : ""}${canWrite() ? `<button class="btn small" style="margin-left:auto" type="button" data-act="task-new" data-d="${S.selDay}">この日に登録</button>` : ""}</h3>
       ${dayList.length ? dayList.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">この日の業務はありません。</p>`}
     </section>
   </div>`;
@@ -468,13 +477,14 @@ function inviteDialog() {
   const body = fld("Gmailアドレス", `<input type="email" name="email" id="f-email" required autocomplete="off" placeholder="例：yamada.taro@gmail.com">`, { full: true, req: true, help: "その人がログインに使うGoogleアカウントのアドレス" }) +
     fld("表示名", `<input name="name" id="f-name" required placeholder="例：山田">`, { req: true, help: "カレンダーやKPIに出る名前" }) +
     `<div class="field"><span class="lbl">色</span><div class="swatches" role="radiogroup" aria-label="色">${MEMBER_COLORS.map((c, i) => `<label class="sw-pick"><input type="radio" name="color" id="f-color-${i}" value="${c}" ${i === activeMembers().length % MEMBER_COLORS.length ? "checked" : ""}><span class="swatch" style="background:${c}" title="${c}"></span></label>`).join("")}</div></div>` +
+    `<div class="field full"><span class="lbl">権限</span><div class="role-pick">${ROLES.map(([k, l]) => `<label class="role-opt"><input type="radio" name="role" id="f-role-${k}" value="${k}" ${k === "member" ? "checked" : ""}><span><b>${l}</b><small>${ROLE_HELP[k]}</small></span></label>`).join("")}</div></div>` +
     `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="finance" id="f-finance" value="1">収支を見られるようにする（閲覧のみ）</label></div>`;
   openDlg("メンバーを追加", body, {
     submit: async f => {
       const email = (f.email || "").trim().toLowerCase(); const name = (f.name || "").trim();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showErr("メールアドレスの形式が正しくありません。"), false;
       if (!name) return showErr("表示名を入力してください。"), false;
-      const data = { name, color: f.color || null, finance: !!f.finance };
+      const data = { name, color: f.color || null, finance: !!f.finance, role: roleOf({ role: f.role }) };
       const existing = S.members.find(m => (m.email || "").toLowerCase() === email);
       if (existing) {
         await updateDoc(doc(db, "members", existing.id), { ...data, status: "active" });
@@ -498,17 +508,18 @@ function vMembers() {
   return `<div class="bar"><h2>メンバー</h2><button class="btn" type="button" data-act="inv-new">メンバーを追加</button></div>
   <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">「メンバーを追加」でGmailアドレスを登録しておくと、その人がGoogleでログインした瞬間に、承認なしで使えるようになります。登録していない人がログインした場合は「承認待ち」で表示されます。</p>
   ${invites.length ? `<section class="panel" style="margin-bottom:16px"><h3>追加済み・まだログインしていない人<span class="hint">${invites.length}人</span></h3>
-    ${invites.map(iv => `<div class="inv-row"><span class="who" style="--mc:${iv.color || "var(--muted)"}"><i></i><b>${esc(iv.name)}</b></span><span class="muted inv-mail">${esc(iv.id)}</span>${iv.finance ? `<span class="pill info">収支閲覧</span>` : ""}<span class="sp"></span><button class="btn sec small" type="button" data-act="inv-copy" data-id="${esc(iv.id)}">案内文をコピー</button><button class="link" type="button" style="color:var(--bad)" data-act="inv-del" data-id="${esc(iv.id)}">${S.armDel === "inv:" + iv.id ? "本当に取り消す" : "取り消す"}</button></div>`).join("")}
+    ${invites.map(iv => `<div class="inv-row"><span class="who" style="--mc:${iv.color || "var(--muted)"}"><i></i><b>${esc(iv.name)}</b></span><span class="muted inv-mail">${esc(iv.id)}</span>${rolePill(roleOf(iv))}${iv.finance ? `<span class="pill info">収支閲覧</span>` : ""}<span class="sp"></span><button class="btn sec small" type="button" data-act="inv-copy" data-id="${esc(iv.id)}">案内文をコピー</button><button class="link" type="button" style="color:var(--bad)" data-act="inv-del" data-id="${esc(iv.id)}">${S.armDel === "inv:" + iv.id ? "本当に取り消す" : "取り消す"}</button></div>`).join("")}
   </section>` : ""}
-  <div class="tablewrap"><table><thead><tr><th>表示名</th><th>色</th><th>Googleアカウント</th><th>状態</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
+  <div class="tablewrap"><table><thead><tr><th>表示名</th><th>色</th><th>Googleアカウント</th><th>状態</th><th>権限</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
   ${list.map(m => { const self = m.id === uid(); return `<tr>
     <td><input class="name-in" id="mn-${esc(m.id)}" value="${esc(m.name || "")}" data-act="mem-name" data-id="${esc(m.id)}" aria-label="表示名"></td>
     <td><div class="swatches" role="group" aria-label="${esc(m.name || "")}の色">${MEMBER_COLORS.map(c => `<button type="button" class="swatch" style="background:${c}" data-act="mem-color" data-id="${esc(m.id)}" data-c="${c}" aria-label="色 ${c}" aria-pressed="${mColor(m.id) === c}"></button>`).join("")}</div></td>
     <td>${esc(m.email || "")}</td><td>${st(m.status)}</td>
+    <td>${self ? `<span class="muted">管理者</span>` : `<select class="role-sel" id="mr-${esc(m.id)}" data-act="mem-role" data-id="${esc(m.id)}" aria-label="${esc(m.name || "")}の権限">${ROLES.map(([k, l]) => `<option value="${k}" ${roleOf(m) === k ? "selected" : ""}>${l}</option>`).join("")}</select>`}</td>
     <td>${self ? `<span class="muted">管理者</span>` : `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mf-${esc(m.id)}" data-act="mem-fin" data-id="${esc(m.id)}" ${m.finance ? "checked" : ""}>見られる</label>`}</td>
     <td>${self ? "" : m.status === "pending" ? `<button class="btn small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">承認する</button> <button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">拒否</button>` : m.status === "active" ? `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">利用停止</button>` : `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">再開する</button>`}</td></tr>`; }).join("")}
   </tbody></table></div>
-  <p class="muted" style="font-size:.8rem;margin-top:10px">収支を見られる人は、収支の閲覧のみできます（編集は管理者だけ）。</p>`;
+  <div class="role-legend"><b>権限の違い</b><ul>${ROLES.map(([k, l]) => `<li><b>${l}</b>：${ROLE_HELP[k]}</li>`).join("")}<li><b>管理者（佐藤）</b>：上記すべて＋メンバー管理・設定・収支の編集</li></ul><span class="muted">「収支の閲覧」は権限とは別に、1人ずつ選べます（編集は管理者だけ）。</span></div>`;
 }
 
 const rowHTML = (key, i, x, label) => `<div class="row"><button type="button" class="handle" aria-label="並べ替え（↑↓キーで移動）" title="ドラッグして並べ替え"><svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true" fill="currentColor"><circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/><circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/><circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg></button><input id="s-${key}-${i}" value="${esc(x)}" aria-label="${esc(label || "項目")}"><button class="btn sec small" type="button" data-rm>外す</button></div>`;
@@ -699,7 +710,7 @@ function taskDialog(t, date) {
     const sw = sharedAll(t) ? "全員" : t.shareWith.map(memName).join("・");
     openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${timeLabel(t)}</div>`) + fld("担当者", `<div class="ro">${esc(ownersOf(t).map(memName).join("・") || "未定")}</div>`) +
       fld("担当業務", `<div class="ro">${esc(taskTitle(t))}</div>`, { full: true }) + (t.detail && t.routine !== "__other" ? fld("内容・メモ", `<div class="ro">${esc(t.detail)}</div>`, { full: true }) : "") +
-      fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者です" }), { readOnly: true });
+      fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者・副管理者です" }), { readOnly: true });
     return;
   }
   const last = memGet("last_task") || {};
@@ -897,7 +908,7 @@ document.addEventListener("click", async e => {
     try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, target: k.target, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err), "error"); }
     return;
   }
-  if (act === "task-new") return taskDialog(null, a.dataset.d);
+  if (act === "task-new") { if (!canWrite()) return; return taskDialog(null, a.dataset.d); }
   if (act === "task-open") return taskDialog(S.tasks.find(t => t.id === id));
   if (act === "day") { S.selDay = a.dataset.d; S.pulse = ".day-panel"; render(); return; }
   if (act === "led-new") return ledDialog(null);
@@ -932,6 +943,7 @@ document.addEventListener("change", async e => {
     }
     if (act === "kpi-cell") { const raw = a.value.trim(); await updateDoc(doc(db, "kpis", id), new FieldPath("weekly", a.dataset.wk), { value: raw === "" ? null : Number(raw), by: uid() }); toast("保存しました"); }
     if (act === "mem-name") { await updateDoc(doc(db, "members", id), { name: a.value.trim() }); toast("表示名を保存しました"); }
+    if (act === "mem-role") { await updateDoc(doc(db, "members", id), { role: a.value }); toast(memName(id) + "さんを「" + roleLabel(a.value) + "」にしました"); }
     if (act === "mem-fin") { await updateDoc(doc(db, "members", id), { finance: a.checked }); toast(a.checked ? "収支を見られるようにしました" : "収支を見られないようにしました"); }
   } catch (err) { if (a.type === "checkbox") a.checked = !a.checked; toast(errMsg(err), "error"); }
 });
