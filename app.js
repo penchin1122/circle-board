@@ -170,6 +170,7 @@ function startData() {
   listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
   listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
   listen("forms", collection(db, "forms"), s => S.forms = docsOf(s));
+  listen("issues", collection(db, "issues"), s => S.issues = docsOf(s));
   if (S.isAdmin) listen("invites", collection(db, "invites"), s => S.invites = docsOf(s));
   if (canManage()) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
   else {
@@ -391,6 +392,9 @@ function vHome() {
   const mine = S.tasks.filter(t => t.date === TODAY && (isMine(t) || sharedAll(t) || (t.shareWith || []).includes(uid()))).sort(sortTasks);
   const myOpen = mine.filter(t => !t.done).length;
   const overdue = S.tasks.filter(t => sharedAll(t) && !t.done && t.date < TODAY).sort(sortTasks);
+  const issues = S.issues || [];
+  const openIssues = issues.filter(i => !i.done).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+  const doneIssues = issues.filter(i => i.done).sort((a, b) => (b.doneAt?.seconds || 0) - (a.doneAt?.seconds || 0)).slice(0, 20);
   const myLate = S.tasks.filter(t => !sharedAll(t) && isMine(t) && !t.done && t.date < TODAY).sort(sortTasks);
   const ks = S.kpis.filter(k => k.month === THISMONTH).sort((a, b) => (a.order || 0) - (b.order || 0));
   const untilMtg = daysBetween(TODAY, NEXTMTG);
@@ -413,8 +417,11 @@ function vHome() {
         ${mine.length ? mine.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">今日の業務はありません。</p>`}
         ${myKpiNoReport.length ? `<div class="banner" style="margin:12px 0 0">${untilMtg === 0 ? "今日" : untilMtg === 1 ? "明日" : untilMtg + "日後"}の${mtgName(NEXTMTG) === "月末" ? "月末締め" : "MTG"}（${md(NEXTMTG)}）までにKPIの報告をお願いします：${myKpiNoReport.map(k => esc(k.name)).join("、")} <button class="link" type="button" data-act="go" data-tab="kpi">入力する</button></div>` : ""}
       </section>
-      <section class="panel"><h3>未対応（全体共有）<span class="hint">昨日までに完了していない業務 ${overdue.length}件</span></h3>
-        ${overdue.length ? overdue.map(t => taskItem(t, { late: true, showDate: true })).join("") : `<p class="muted" style="margin:0">未対応の業務はありません。</p>`}
+      <section class="panel"><h3>未対応（全体共有）<span class="hint">${openIssues.length + overdue.length}件</span>${canWrite() ? `<button class="btn small" type="button" data-act="issue-new">＋ 追加</button>` : ""}</h3>
+        ${openIssues.length ? openIssues.map(issueItem).join("") : ""}
+        ${overdue.length ? `<div class="sub-head">期限を過ぎた業務</div>` + overdue.map(t => taskItem(t, { late: true, showDate: true })).join("") : ""}
+        ${!openIssues.length && !overdue.length ? `<p class="muted" style="margin:0">未対応の事項はありません。${canWrite() ? "気づいたことは「＋ 追加」で登録できます。" : ""}</p>` : ""}
+        ${doneIssues.length ? `<button class="link done-toggle" type="button" data-act="issue-showdone">${S.showDoneIssues ? "完了済みを隠す" : `完了済み ${doneIssues.length}件を表示`}</button>${S.showDoneIssues ? `<div class="done-list">${doneIssues.map(issueItem).join("")}</div>` : ""}` : ""}
       </section>
       ${myLate.length ? `<section class="panel"><h3>自分の未対応<span class="hint">${myLate.length}件</span></h3>${myLate.map(t => taskItem(t, { late: true, showDate: true })).join("")}</section>` : ""}
     </div>
@@ -741,7 +748,7 @@ function showErr(err) { const p = $("#f-err"); p.hidden = false; p.textContent =
 dlg.addEventListener("click", e => { if (e.target === dlg) { if (draftKey) { /* 入力途中は残す */ } closeDlg(); } });
 dlg.addEventListener("cancel", e => { e.preventDefault(); closeDlg(); });
 form.addEventListener("click", e => {
-  if (e.target.closest("[data-discard]")) { const k = draftKey; memSet("draft_" + k, null); closeDlg(); if (k === "task") taskDialog(null, S.selDay); if (k === "led") ledDialog(null); return; }
+  if (e.target.closest("[data-discard]")) { const k = draftKey; memSet("draft_" + k, null); closeDlg(); if (k === "task") taskDialog(null, S.selDay); if (k === "led") ledDialog(null); if (k === "issue") issueDialog(null); return; }
   if (e.target.closest("[data-close]")) { if (draftKey) memSet("draft_" + draftKey, null); closeDlg(); return; }
   const d = e.target.closest("#f-del");
   if (d) {
@@ -904,6 +911,43 @@ function wireMultiDate(initial) {
   syncDateMode();
 }
 
+/* ===== 未対応事項：日付のない「やらなきゃいけないこと」を全員で共有 ===== */
+const canEditIssue = i => canManage() || (i.createdBy === uid() && canWrite());
+const canToggleIssue = i => canEditIssue(i) || ((i.owners || []).includes(uid()) && canWrite());
+function issueItem(i) {
+  const late = i.due && !i.done && i.due < TODAY;
+  const owners = (i.owners || []).map(whoTag).join(" ");
+  return `<div class="task issue${i.done ? " done" : ""}">
+    <div class="time">${i.due ? `<span class="${late ? "neg" : ""}">${md(i.due).replace(/\(.\)/, "")}まで</span>` : `<span class="muted">期限なし</span>`}</div>
+    <div><div class="what">${late ? `<span class="pill bad">期限切れ</span> ` : ""}${esc(i.title)}</div><div class="whos">${owners || `<span class="muted" style="font-size:.8rem">担当未定</span>`}</div></div>
+    <div class="acts">${canToggleIssue(i) ? `<label><input type="checkbox" data-act="issue-done" data-id="${esc(i.id)}" ${i.done ? "checked" : ""}>完了</label>` : (i.done ? `<span class="pill good">完了</span>` : "")}<button class="link" type="button" data-act="issue-open" data-id="${esc(i.id)}">${canEditIssue(i) ? "編集" : "詳細"}</button></div>
+    ${i.detail ? `<div class="sub">${esc(i.detail)}</div>` : ""}
+  </div>`;
+}
+function issueDialog(it) {
+  if (it && !canEditIssue(it)) {
+    openDlg("未対応事項", fld("内容", `<div class="ro">${esc(it.title)}</div>`, { full: true }) + (it.detail ? fld("詳細", `<div class="ro" style="white-space:pre-line">${esc(it.detail)}</div>`, { full: true }) : "") +
+      fld("期限", `<div class="ro">${it.due ? md(it.due) : "なし"}</div>`) + fld("担当", `<div class="ro">${esc((it.owners || []).map(memName).join("・") || "未定")}</div>`) +
+      fld("追加した人", `<div class="ro">${esc(memName(it.createdBy))}</div>`, { help: "編集できるのは追加した人と管理者・副管理者です" }), { readOnly: true });
+    return;
+  }
+  const v = it || { title: "", detail: "", due: "", owners: [] };
+  const body = fld("内容", `<input name="title" id="f-title" required value="${esc(v.title)}" placeholder="例：チラシの在庫が少ないので追加発注">`, { full: true, req: true }) +
+    fld("詳細（任意）", `<textarea name="detail" id="f-detail">${esc(v.detail || "")}</textarea>`, { full: true }) +
+    fld("期限（任意）", `<input type="date" name="due" id="f-due" value="${esc(v.due || "")}">`) +
+    `<div class="field full"><span class="lbl">担当（任意・複数可）</span><div class="pick-chips">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-iowner-${i}" value="${esc(m.id)}" ${(v.owners || []).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div><span class="help">決まっていなければ空欄のままでOK。運営メンバー全員のホームに表示されます。</span></div>`;
+  openDlg(it ? "未対応事項を編集" : "未対応事項を追加", body, {
+    submit: async f => {
+      const data = { title: f.title.trim(), detail: f.detail.trim(), due: f.due || "", owners: f.__fd.getAll("owners") };
+      if (!data.title) return showErr("内容を入力してください。"), false;
+      if (it) await updateDoc(doc(db, "issues", it.id), data);
+      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "issues"), data); S.anim = "in"; return "未対応事項を追加しました"; }
+    },
+    del: it ? () => deleteDoc(doc(db, "issues", it.id)) : null,
+    draft: it ? null : "issue"
+  });
+  if (!it) restoreDraft();
+}
 function ledDialog(r) {
   const c = cfg(); const names = activeMembers().map(m => m.name || m.email);
   const lastL = memGet("last_led") || {};
@@ -1014,6 +1058,9 @@ document.addEventListener("click", async e => {
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
   if (act === "inv-new") return inviteDialog();
+  if (act === "issue-new") { if (canWrite()) issueDialog(null); return; }
+  if (act === "issue-open") return issueDialog((S.issues || []).find(i => i.id === id));
+  if (act === "issue-showdone") { S.showDoneIssues = !S.showDoneIssues; render(); return; }
   if (act === "form-new") return formDialog(null);
   if (act === "form-edit") return formDialog((S.forms || []).find(f => f.id === id));
   if (act === "form-copy") { const f = (S.forms || []).find(x => x.id === id); if (f) copyPlain(formShareText(f), f.message ? "案内文をコピーしました" : "リンクをコピーしました"); return; }
@@ -1054,6 +1101,12 @@ document.addEventListener("change", async e => {
   }
   if (act === "onlymine") { S.onlyMine = a.checked; ls.set("cb_onlymine", a.checked ? "1" : "0"); render(); return; }
   try {
+    if (act === "issue-done") {
+      const row = a.closest(".task"); if (row) { row.classList.toggle("done", a.checked); row.classList.add("just"); }
+      if (a.checked) toast("完了にしました", "success", { action: { label: "元に戻す", run: () => updateDoc(doc(db, "issues", id), { done: false, doneAt: null }).catch(e => toast(errMsg(e), "error")) } });
+      await new Promise(r => setTimeout(r, reducedMotion() ? 0 : 380));
+      await updateDoc(doc(db, "issues", id), { done: a.checked, doneAt: a.checked ? serverTimestamp() : null, doneBy: a.checked ? uid() : null });
+    }
     if (act === "task-done") {
       const row = a.closest(".task"); if (row) { row.classList.toggle("done", a.checked); row.classList.add("just"); }
       if (a.checked) toast("完了にしました", "success", { action: { label: "元に戻す", run: () => updateDoc(doc(db, "tasks", id), { done: false }).catch(e => toast(errMsg(e), "error")) } });
