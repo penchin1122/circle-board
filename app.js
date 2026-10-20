@@ -295,6 +295,10 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#drawer").classList.contains("open")) setMenu(false); });
 if (DESK.addEventListener) DESK.addEventListener("change", () => setMenu(false));
+/* 左メニューの見出しの下線を、上部ヘッダーの下線と同じ高さにそろえる */
+(() => { const mast = document.querySelector(".mast"); if (!mast) return;
+  const sync = () => document.documentElement.style.setProperty("--mast-h", mast.getBoundingClientRect().height + "px");
+  sync(); if (window.ResizeObserver) new ResizeObserver(sync).observe(mast); else addEventListener("resize", sync); })();
 function countUp(el) {
   const to = Number(el.dataset.v); const fmt = el.dataset.f; if (!isFinite(to)) return;
   const sign = el.dataset.sign || ""; const t0 = performance.now(), dur = 700;

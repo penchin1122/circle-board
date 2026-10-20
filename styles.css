@@ -520,7 +520,9 @@ label.checks input{margin-top:.3em;flex:none}
   body.has-nav .drawer-x{display:none}
   body.has-nav .mast .logo{display:none}
   body.has-nav .drawer-bg{display:none}
-  body.has-nav .drawer-head{padding:18px 16px 14px}
+  body.has-nav .drawer{padding-top:0}
+  body.has-nav .drawer-head{box-sizing:border-box;height:var(--mast-h,auto);padding:env(safe-area-inset-top,0px) 16px 0;position:relative}
+  body.has-nav .drawer-head::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--navy)}
   body.has-nav.menu-open{overflow:visible}
 }
 
