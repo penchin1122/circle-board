@@ -476,12 +476,15 @@ function vKpi() {
     const w = k.weekly || {}; const editable = canManage() || (k.owner === uid() && canWrite());
     const tools = canManage() ? `<div class="kpi-tools"><button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button><button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button></div>` : "";
     const tgt = Number(k.target) > 0 ? `目標 ${num(k.target)}${esc(k.unit || "")}` : "目標未設定";
-    return `<tr><td><b>${esc(k.name)}</b>${isTrack(k) ? ` <span class="pill plain">記録のみ</span>` : ""}<div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}・${tgt}</div>${tools}</td>
+    return `<tr><td><span class="kname"><b>${esc(k.name)}</b>${isTrack(k) ? ` <span class="pill plain">記録のみ</span>` : ""}</span><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}・${tgt}</div>${tools}</td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
-        return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}</tr>`;
+        return `<td class="num${wk === NEXTMTG ? " now" : ""}" data-label="${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}" data-short="${mtgLabel(wk)}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}</tr>`;
   }).join("");
-  return head + `<section class="panel kpi-entry"><h3>ミーティング・月末ごとの進捗入力<span class="hint">入力すると自動で保存。進捗はホームで確認</span></h3>
-      <p class="muted" style="font-size:.82rem;margin:0 0 10px">第2・第4木曜日の定例MTGと月末の3回、各KPIの担当者が実績を入力します。「最新値」はその時点の数値（例：フォロワー数）、「合計」は前回から増えた分を入れてください（第2木＝月初から、第4木＝第2木の翌日から、月末＝第4木の翌日から月末まで）。</p>
+  return head + `<section class="panel kpi-entry"><h3>MTG・月末ごとの進捗入力<span class="hint hide-sm">進捗はホームで確認</span></h3>
+      <p class="kpi-note">第2・第4木曜のMTGと月末に、担当者が実績を入力します。入力すると自動で保存されます。</p>
+      <details class="kpi-rule"><summary>何を入れればいい？</summary><ul>
+        <li><b>最新値</b>：その時点の数（例：フォロワー数）</li>
+        <li><b>合計</b>：前回から増えた分（第2木＝月初から／第4木＝第2木の翌日から／月末＝第4木の翌日から）</li></ul></details>
       <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回" : ""}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
     </section>`;
 }
