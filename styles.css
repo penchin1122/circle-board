@@ -34,10 +34,10 @@ button,input,select,textarea{font:inherit;color:inherit}
 .mast-tools .me{color:var(--muted)}
 .ghost{white-space:nowrap;background:#FFFFFF;border:1px solid var(--line);color:var(--fg);border-radius:var(--radius);padding:6px 12px;font-size:.85rem;cursor:pointer}
 .ghost:hover{border-color:var(--accent);color:var(--accent)}
-nav.tabs{display:flex;gap:4px;margin-top:10px;overflow-x:auto}
+nav.tabs{display:flex;gap:4px;margin-top:10px;overflow-x:auto;position:relative}
 nav.tabs:empty{margin-top:4px}
 nav.tabs button{background:transparent;border:0;border-bottom:3px solid transparent;color:var(--muted);padding:8px 14px 10px;font-weight:700;font-size:.95rem;cursor:pointer;white-space:nowrap}
-nav.tabs button[aria-selected="true"]{color:var(--navy);border-bottom-color:var(--accent)}
+nav.tabs button[aria-selected="true"]{color:var(--navy)}
 nav.tabs button:hover:not([aria-selected="true"]){color:var(--fg)}
 nav.tabs .badge{display:inline-block;background:var(--bad);color:#fff;border-radius:999px;font-size:.7rem;padding:0 6px;margin-left:4px;line-height:1.6}
 
@@ -256,3 +256,109 @@ dialog::backdrop{background:rgba(8,18,38,.55)}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.sk{animation:none}.toast,.toast.out{animation:none}}
 @media (max-width:600px){.sk-cal .day{min-height:56px}}
+
+/* ===================== アニメーション =====================
+   方針：動きは「どこが変わったか」を伝えるためだけに使い、短く（150〜450ms）、ease-outで止める。
+   端末で「視差効果を減らす」がオンの人には動かさない（末尾のmedia query） */
+:root{--ease-out:cubic-bezier(.22,1,.36,1);--ease-io:cubic-bezier(.65,0,.35,1)}
+
+/* タブの下線がスライドする */
+.tab-ind{position:absolute;bottom:0;height:3px;border-radius:3px 3px 0 0;background:var(--accent);transition:left .35s var(--ease-out),width .35s var(--ease-out),opacity .2s;pointer-events:none}
+nav.tabs button{transition:color .2s}
+
+/* 画面の切り替え：要素が少しずつ時間差で浮き上がる */
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes from-r{from{opacity:0;transform:translateX(22px)}to{opacity:1;transform:none}}
+@keyframes from-l{from{opacity:0;transform:translateX(-22px)}to{opacity:1;transform:none}}
+.anim-in :is(.bar,.panel,.fig,.kpi,.task,.cal,.tablewrap tbody tr,.empty,.listedit .row,.legend){animation:rise .45s var(--ease-out) both;animation-delay:calc(var(--i,0) * 35ms)}
+.anim-l :is(.panel,.fig,.kpi,.cal,.tablewrap,.empty,.legend){animation:from-r .4s var(--ease-out) both;animation-delay:calc(var(--i,0) * 25ms)}
+.anim-r :is(.panel,.fig,.kpi,.cal,.tablewrap,.empty,.legend){animation:from-l .4s var(--ease-out) both;animation-delay:calc(var(--i,0) * 25ms)}
+
+/* 進捗バー・内訳バーが伸びる */
+@keyframes grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+:is(.anim-in,.anim-l,.anim-r) .meter i,:is(.anim-in,.anim-l,.anim-r) .hbar .track i{transform-origin:left center;animation:grow .9s var(--ease-out) both;animation-delay:calc(var(--i,0) * 35ms + 120ms)}
+.meter i{transition:width .5s var(--ease-out)}
+:is(.anim-in) .meter .pace{animation:rise .4s .5s both}
+
+/* 達成したKPIのバッジが一度だけ弾む */
+@keyframes pop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.12);opacity:1}100%{transform:scale(1)}}
+:is(.anim-in,.anim-l,.anim-r) .pill.good{animation:pop .5s var(--ease-out) both;animation-delay:calc(var(--i,0) * 35ms + 450ms)}
+
+/* 日付を選んだときの右パネル */
+@keyframes soft-in{from{opacity:.4;transform:translateY(4px)}to{opacity:1;transform:none}}
+.pulse-in{animation:soft-in .3s var(--ease-out)}
+.cal .day{transition:background-color .15s, box-shadow .2s var(--ease-out)}
+.cal .day.sel{animation:sel-ring .3s var(--ease-out)}
+@keyframes sel-ring{from{box-shadow:inset 0 0 0 6px color-mix(in srgb,var(--accent) 25%,transparent)}to{box-shadow:inset 0 0 0 2px var(--accent)}}
+.chip{transition:transform .15s}
+.cal .day:hover .chip{transform:translateX(2px)}
+
+/* 完了チェック：取り消し線が左から引かれる */
+.task .what{background:linear-gradient(currentColor,currentColor) left 55%/0% 1.5px no-repeat;transition:background-size .35s var(--ease-out),color .3s}
+.task.done .what{text-decoration:none;background-size:100% 1.5px}
+.task.just{transition:opacity .35s}
+.task.done.just{opacity:.75}
+input[type=checkbox]{transition:transform .15s var(--ease-out)}
+input[type=checkbox]:active{transform:scale(.85)}
+
+/* ボタン・カード：押した感触 */
+.btn,.ghost,.gbtn,.link,.swatch,.handle,.monthnav button{transition:transform .12s var(--ease-out),filter .15s,background-color .15s,border-color .15s,color .15s,box-shadow .2s}
+.btn:active,.ghost:active,.gbtn:active,.monthnav button:active{transform:scale(.96)}
+.btn:hover{box-shadow:0 4px 12px rgba(30,95,196,.22)}
+.btn.sec:hover{box-shadow:none;background:var(--accent-soft)}
+.swatch:hover{transform:scale(1.15)}
+.panel{transition:box-shadow .25s var(--ease-out),border-color .25s}
+.tablewrap tbody tr.click td{transition:background-color .15s}
+.field input,.field select,.field textarea{transition:border-color .15s,box-shadow .2s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);outline:none}
+.badge{animation:pop .45s var(--ease-out)}
+.dot-off{animation:blink 2.4s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ダイアログ：PCは拡大しながら、スマホは下からシートとして出る */
+dialog[open]{animation:dlg-in .26s var(--ease-out)}
+dialog[open]::backdrop{animation:fade-in .26s ease-out}
+dialog.closing{animation:dlg-out .18s ease-in forwards}
+dialog.closing::backdrop{animation:fade-out .18s ease-in forwards}
+dialog.swap .dlg-b{animation:soft-in .25s var(--ease-out)}
+@keyframes dlg-in{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes dlg-out{to{opacity:0;transform:translateY(6px) scale(.98)}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes fade-out{to{opacity:0}}
+@media (max-width:600px){
+  dialog{margin:auto auto 0;width:100%;max-width:100%;max-height:92vh;border-radius:16px 16px 0 0;border-bottom:0;padding-bottom:env(safe-area-inset-bottom,0px)}
+  dialog .dlg-h{position:relative}
+  dialog .dlg-h::before{content:"";position:absolute;left:50%;top:6px;width:36px;height:4px;border-radius:2px;background:var(--line);transform:translateX(-50%)}
+  dialog[open]{animation:sheet-in .32s var(--ease-out)}
+  dialog.closing{animation:sheet-out .2s ease-in forwards}
+  @keyframes sheet-in{from{transform:translateY(100%)}to{transform:none}}
+  @keyframes sheet-out{to{transform:translateY(100%)}}
+}
+
+/* ===================== 複数日の選択 ===================== */
+.seg{display:inline-flex;background:var(--surface-2);border-radius:8px;padding:3px;gap:2px;align-self:flex-start;margin-bottom:6px}
+.seg label{position:relative;cursor:pointer}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg span{display:block;padding:6px 14px;border-radius:6px;font-size:.85rem;font-weight:700;color:var(--muted);transition:background-color .2s,color .2s,box-shadow .2s}
+.seg input:checked + span{background:#FFFFFF;color:var(--navy);box-shadow:0 1px 3px rgba(15,45,107,.15)}
+.seg input:focus-visible + span{outline:3px solid var(--accent);outline-offset:1px}
+#d-one,#d-multi{animation:soft-in .25s var(--ease-out)}
+.mpick{border:1px solid var(--line);border-radius:8px;padding:8px;overflow:hidden}
+.mp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.mp-nav{background:none;border:0;font-size:1.2rem;color:var(--muted);cursor:pointer;width:34px;height:30px;border-radius:6px;transition:background-color .15s}
+.mp-nav:hover{background:var(--surface-2)}
+.mp-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center}
+.mp-grid.slide-l{animation:from-r .3s var(--ease-out)}
+.mp-grid.slide-r{animation:from-l .3s var(--ease-out)}
+.mp-dow{font-size:.7rem;color:var(--muted);font-weight:700;padding:2px 0}
+.mp-day{height:36px;border:0;border-radius:50%;background:transparent;cursor:pointer;font-size:.88rem;font-variant-numeric:tabular-nums;transition:background-color .18s,color .18s,transform .15s var(--ease-out)}
+.mp-day:hover{background:var(--surface-2)}
+.mp-day.out{color:var(--muted);opacity:.55}
+.mp-day.today{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.mp-day.on{background:var(--accent);color:#FFFFFF;font-weight:700}
+.mp-day.pop{animation:pop .3s var(--ease-out)}
+.mpick-sum{font-size:.82rem;margin-top:6px;min-height:1.5em;overflow-wrap:anywhere}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after,dialog[open],dialog[open]::backdrop{animation:none!important;transition:none!important}
+}

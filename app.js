@@ -195,7 +195,7 @@ function kpiRow(k, withEdit) {
   const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
   return `<div class="kpi">
     <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${withEdit && S.isAdmin ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : ""}</div>
-    <div class="nums">${s.t > 0 ? `<b>${num(s.a.v)}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
+    <div class="nums">${s.t > 0 ? `<b>${cu(s.a.v, "num")}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
     <div class="meta"><span>担当：${whoTag(k.owner)}</span><span>${k.mode === "latest" ? "最新値で集計" : "MTGごとの合計で集計"}</span>${k.month === THISMONTH && s.t > 0 ? `<span>今日時点の目安：${num(s.t * s.el)}${esc(k.unit || "")}</span>` : ""}${S.isAdmin ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
   </div>`;
@@ -223,6 +223,32 @@ function taskItem(t, opts = {}) {
 const sumBy = (rows, type) => rows.filter(r => r.type === type).reduce((a, r) => a + (Number(r.amount) || 0), 0);
 
 /* ================= render ================= */
+/* ===== アニメーション ===== */
+let tabInd = null;
+function placeTabInd(instant) {
+  const tabs = $("#tabs"); const cur = tabs.querySelector('[aria-selected="true"]');
+  if (!tabInd) { tabInd = document.createElement("span"); tabInd.className = "tab-ind"; tabInd.setAttribute("aria-hidden", "true"); }
+  if (!cur) { tabInd.style.opacity = 0; return; }
+  tabs.appendChild(tabInd);
+  if (instant || !tabInd.dataset.placed) { tabInd.style.transition = "none"; requestAnimationFrame(() => { tabInd.style.transition = ""; }); }
+  tabInd.style.opacity = 1; tabInd.style.left = cur.offsetLeft + "px"; tabInd.style.width = cur.offsetWidth + "px"; tabInd.dataset.placed = "1";
+}
+window.addEventListener("resize", () => placeTabInd(true));
+function countUp(el) {
+  const to = Number(el.dataset.v); const fmt = el.dataset.f; if (!isFinite(to)) return;
+  const sign = el.dataset.sign || ""; const t0 = performance.now(), dur = 700;
+  const show = v => el.textContent = sign + (fmt === "yen" ? yen(v) : num(v));
+  const step = now => { const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3); show(to * e); if (p < 1) requestAnimationFrame(step); else show(to); };
+  show(0); requestAnimationFrame(step);
+}
+function runEnter(main, kind) {
+  main.classList.remove("anim-in", "anim-l", "anim-r"); void main.offsetWidth;
+  main.classList.add(kind === "l" ? "anim-l" : kind === "r" ? "anim-r" : "anim-in");
+  main.querySelectorAll(".bar, .panel, .fig, .kpi, .task, .cal, .tablewrap tbody tr, .empty, .listedit .row, .legend").forEach((el, i) => el.style.setProperty("--i", Math.min(i, 14)));
+  main.querySelectorAll(".cu").forEach(countUp);
+  clearTimeout(runEnter.t); runEnter.t = setTimeout(() => main.classList.remove("anim-in", "anim-l", "anim-r"), 1100);
+}
+const cu = (v, f, sign = "") => `<span class="cu" data-v="${Math.abs(Number(v) || 0)}" data-f="${f}" data-sign="${sign}">${sign}${f === "yen" ? yen(Math.abs(v)) : num(v)}</span>`;
 function renderChrome() {
   const tools = $("#mast-tools"), tabs = $("#tabs");
   if (!S.user || !isActive()) {
@@ -233,6 +259,7 @@ function renderChrome() {
   const vis = tabsVisible(); if (!vis.some(([k]) => k === S.tab)) S.tab = "home";
   const pending = S.isAdmin ? S.members.filter(m => m.status === "pending").length : 0;
   tabs.innerHTML = vis.map(([k, l]) => `<button role="tab" type="button" data-tab="${k}" aria-selected="${k === S.tab}">${l}${k === "members" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
+  placeTabInd();
   tools.innerHTML = `<span class="me">${esc(memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || ""))}${S.isAdmin ? "（管理者）" : ""}</span><button class="ghost" type="button" data-act="notify" aria-label="通知の設定" title="通知の設定"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>${notifyOn() ? "" : `<span class="dot-off"></span>`}</button><button class="ghost" type="button" data-act="logout">ログアウト</button>`;
 }
 function render() {
@@ -256,7 +283,10 @@ function render() {
   const views = { home: vHome, kpi: vKpi, cal: vCal, money: vMoney, members: vMembers, settings: vSettings };
   if (S.tab === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
+  const anim = S.anim || (main.querySelector(".sk-wrap") ? "in" : null); S.anim = null;
   main.innerHTML = views[S.tab]();
+  if (anim && !reducedMotion()) runEnter(main, anim);
+  if (S.pulse) { const el = main.querySelector(S.pulse); S.pulse = null; if (el && !reducedMotion()) { el.classList.remove("pulse-in"); void el.offsetWidth; el.classList.add("pulse-in"); } }
   if (S.isAdmin) { setTimeout(() => { seedMonth(THISMONTH); if (S.tab === "kpi") seedMonth(S.kpiMonth); }, 0); }
   window.scrollTo(0, prevScroll);
 }
@@ -313,7 +343,7 @@ function vHome() {
     const inc = sumBy(mrows, "収入"), exp = sumBy(mrows, "支出"), bal = sumBy(S.ledger, "収入") - sumBy(S.ledger, "支出");
     const uns = S.ledger.filter(r => r.settled === "未精算").sort((a, b) => (a.date || "").localeCompare(b.date || ""));
     fin = `<section class="panel"><h3>お金<button class="link hint" type="button" data-act="go" data-tab="money">収支を開く</button></h3>
-      <div class="figs" style="margin-bottom:8px"><div class="fig"><div class="k">今月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${inc - exp >= 0 ? "+" : "−"}${yen(Math.abs(inc - exp))}</div></div><div class="fig"><div class="k">現在の残高</div><div class="v">${yen(bal)}</div></div></div>
+      <div class="figs" style="margin-bottom:8px"><div class="fig"><div class="k">今月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${cu(inc - exp, "yen", inc - exp >= 0 ? "+" : "−")}</div></div><div class="fig"><div class="k">現在の残高</div><div class="v">${cu(bal, "yen", bal < 0 ? "−" : "")}</div></div></div>
       <div class="muted" style="font-size:.8rem;font-weight:700">未精算の立替 ${uns.length}件</div>
       ${uns.length ? uns.map(r => `<div class="row3"><span>${md(r.date)}</span><span>${esc(r.title)}（${esc(r.owner || "")}）</span><span>${yen(r.amount)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:.85rem">ありません。</p>`}</section>`;
   }
@@ -387,7 +417,7 @@ function vCal() {
   <div class="callayout">
     <div class="stack"><div class="cal">${cells}</div>
       <div class="legend">${activeMembers().map(m => whoTag(m.id)).join("")}</div></div>
-    <section class="panel"><h3>${md(S.selDay)}${S.selDay === TODAY ? "　今日" : ""}<button class="btn small" style="margin-left:auto" type="button" data-act="task-new" data-d="${S.selDay}">この日に登録</button></h3>
+    <section class="panel day-panel"><h3>${md(S.selDay)}${S.selDay === TODAY ? "　今日" : ""}<button class="btn small" style="margin-left:auto" type="button" data-act="task-new" data-d="${S.selDay}">この日に登録</button></h3>
       ${dayList.length ? dayList.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">この日の業務はありません。</p>`}
     </section>
   </div>`;
@@ -405,10 +435,10 @@ function vMoney() {
   const stPill = s => s === "未精算" ? `<span class="pill warn">未精算</span>` : s === "精算済" ? `<span class="pill good">精算済</span>` : `<span class="pill plain">${esc(s || "対象外")}</span>`;
   return `<div class="bar"><h2>収支</h2>${monthNav("moneyMonth")}${S.isAdmin ? `<button class="btn sec" type="button" data-act="led-import">CSVを取り込む</button><button class="btn" type="button" data-act="led-new">収支を記録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
   <div class="figs">
-    <div class="fig"><div class="k">収入</div><div class="v pos">${yen(inc)}</div></div>
-    <div class="fig"><div class="k">支出</div><div class="v neg">${yen(exp)}</div></div>
-    <div class="fig"><div class="k">月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${inc - exp >= 0 ? "+" : "−"}${yen(Math.abs(inc - exp))}</div></div>
-    <div class="fig"><div class="k">月末時点の残高</div><div class="v">${yen(bal)}</div></div>
+    <div class="fig"><div class="k">収入</div><div class="v pos">${cu(inc, "yen")}</div></div>
+    <div class="fig"><div class="k">支出</div><div class="v neg">${cu(exp, "yen")}</div></div>
+    <div class="fig"><div class="k">月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${cu(inc - exp, "yen", inc - exp >= 0 ? "+" : "−")}</div></div>
+    <div class="fig"><div class="k">月末時点の残高</div><div class="v">${cu(bal, "yen", bal < 0 ? "−" : "")}</div></div>
   </div>
   <div class="stack">
     ${rows.length ? `<div class="tablewrap"><table class="ledger-table"><thead><tr><th>日付</th><th>項目</th><th>区分</th><th>カテゴリ</th><th class="num">金額</th><th>担当者</th><th>支払方法</th><th>精算</th></tr></thead><tbody>
@@ -494,7 +524,7 @@ function notifyDialog() {
   form.innerHTML = `<div class="dlg-h"><h3>朝の通知</h3><button type="button" data-close aria-label="閉じる">×</button></div><div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
     <div class="dlg-f"><div class="sp">${on ? `<button class="btn sec" type="button" id="n-off">この端末で受け取らない</button>` : `<button class="btn" type="button" id="n-on">この端末で受け取る</button>`}</div></div>`;
   onSubmit = null; onDelete = null; draftKey = null;
-  try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); }
+  showDlg();
   const onB = form.querySelector("#n-on"), offB = form.querySelector("#n-off");
   if (onB) onB.addEventListener("click", async () => { onB.disabled = true; onB.textContent = "登録しています…"; try { await enablePush(); closeDlg(); toast("この端末で通知を受け取ります"); render(); } catch (e) { showErr(e.message || errMsg(e)); onB.disabled = false; onB.textContent = "この端末で受け取る"; } });
   if (offB) offB.addEventListener("click", async () => { offB.disabled = true; await disablePush(); closeDlg(); toast("この端末への通知を止めました", "info"); render(); });
@@ -511,6 +541,7 @@ function readFormState() {
   form.querySelectorAll("input[name],select[name],textarea[name]").forEach(el => {
     if (el.type === "file") return;
     if (el.type === "checkbox") { (out[el.name] = out[el.name] || []); if (el.checked) out[el.name].push(el.value); }
+    else if (el.type === "radio") { if (el.checked) out[el.name] = el.value; }
     else out[el.name] = el.value;
   });
   return out;
@@ -519,6 +550,7 @@ function applyFormState(st) {
   const set = el => {
     const v = st[el.name]; if (v === undefined) return;
     if (el.type === "checkbox") el.checked = Array.isArray(v) && v.includes(el.value);
+    else if (el.type === "radio") el.checked = v === el.value;
     else if (el.tagName === "SELECT" && ![...el.options].some(o => o.value === v)) return;
     else el.value = v;
   };
@@ -532,10 +564,23 @@ function openDlg(title, body, { submit, del, readOnly, draft } = {}) {
     <div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
     <div class="dlg-f">${del ? `<button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button>` : ""}<div class="sp">${readOnly ? `<button class="btn" type="button" data-close>閉じる</button>` : `<button class="btn sec" type="button" data-close>キャンセル</button><button class="btn" type="submit">保存</button>`}</div></div>`;
   onSubmit = submit; onDelete = del; draftKey = draft || null;
-  try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); }
+  showDlg();
   const f = form.querySelector("input:not([type=checkbox]),select,textarea"); if (f && !readOnly) f.focus();
 }
-function closeDlg() { try { dlg.close(); } catch (e) { dlg.removeAttribute("open"); } draftKey = null; }
+let closeTimer = null;
+const reducedMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+function closeDlg() {
+  draftKey = null;
+  if (!dlg.open) return;
+  const done = () => { dlg.classList.remove("closing"); try { dlg.close(); } catch (e) { dlg.removeAttribute("open"); } closeTimer = null; };
+  if (reducedMotion()) return done();
+  dlg.classList.add("closing"); clearTimeout(closeTimer); closeTimer = setTimeout(done, 180);
+}
+function showDlg() {
+  clearTimeout(closeTimer); closeTimer = null; dlg.classList.remove("closing");
+  if (!dlg.open) { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
+  else { dlg.classList.remove("swap"); void dlg.offsetWidth; dlg.classList.add("swap"); }
+}
 function restoreDraft() {
   if (!draftKey) return; const d = memGet("draft_" + draftKey); if (!d) return;
   applyFormState(d);
@@ -544,6 +589,8 @@ function restoreDraft() {
 form.addEventListener("input", () => { if (draftKey) memSet("draft_" + draftKey, readFormState()); });
 form.addEventListener("change", () => { if (draftKey) memSet("draft_" + draftKey, readFormState()); });
 function showErr(err) { const p = $("#f-err"); p.hidden = false; p.textContent = typeof err === "string" ? err : errMsg(err); }
+dlg.addEventListener("click", e => { if (e.target === dlg) { if (draftKey) { /* 入力途中は残す */ } closeDlg(); } });
+dlg.addEventListener("cancel", e => { e.preventDefault(); closeDlg(); });
 form.addEventListener("click", e => {
   if (e.target.closest("[data-discard]")) { const k = draftKey; memSet("draft_" + k, null); closeDlg(); if (k === "task") taskDialog(null, S.selDay); if (k === "led") ledDialog(null); return; }
   if (e.target.closest("[data-close]")) { if (draftKey) memSet("draft_" + draftKey, null); closeDlg(); return; }
@@ -558,7 +605,7 @@ form.addEventListener("submit", async e => {
   const fd = new FormData(form); const f = Object.fromEntries(fd.entries()); f.__fd = fd;
   const btn = form.querySelector("[type=submit]"); if (btn) btn.disabled = true;
   const dk = draftKey;
-  try { const r = await onSubmit(f); if (r !== false) { if (dk) memSet("draft_" + dk, null); closeDlg(); toast("保存しました"); } }
+  try { const r = await onSubmit(f); if (r !== false) { if (dk) memSet("draft_" + dk, null); closeDlg(); toast(typeof r === "string" ? r : "保存しました"); } }
   catch (err) { showErr(err); }
   finally { if (btn) btn.disabled = false; }
 });
@@ -613,7 +660,16 @@ function taskDialog(t, date) {
   const v = t || { date: date || S.selDay || TODAY, start: last.start ?? "17:30", end: last.end ?? "19:00", owner: uid(), routine: last.routine && (c.routines.includes(last.routine) || last.routine === "__other") ? last.routine : c.routines[0], detail: "", shareWith: last.shareWith || ["all"] };
   const isOther = v.routine === "__other" || (v.routine && !c.routines.includes(v.routine));
   const routineOpts = [...c.routines.map(r => [r, r]), ...(isOther && v.routine !== "__other" ? [[v.routine, v.routine]] : []), ["__other", "その他（下に記述）"]];
-  const body = fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true }) +
+  const dateField = t
+    ? fld("日付", `<input type="date" name="date" id="f-date" required value="${esc(v.date)}">`, { req: true })
+    : `<div class="field full"><span class="lbl">日付<span class="req">必須</span></span>
+        <div class="seg" role="radiogroup" aria-label="日付の選び方"><label><input type="radio" name="dmode" id="f-dmode-one" value="one" checked><span>1日だけ</span></label><label><input type="radio" name="dmode" id="f-dmode-multi" value="multi"><span>複数日をまとめて</span></label></div>
+        <div id="d-one"><input type="date" name="date" id="f-date" value="${esc(v.date)}"></div>
+        <div id="d-multi" hidden><input type="hidden" name="dates" id="f-dates" value=""><div class="mpick" id="mpick"></div>
+          <div class="mpick-sum" id="mpick-sum" aria-live="polite"></div>
+          <span class="help">日付をタップして選びます（もう一度タップで解除）。時間・担当・内容は、選んだすべての日に同じものが入ります。</span></div>
+      </div>`;
+  const body = dateField +
     fld("担当者", sel("owner", memberOpts(), v.owner)) +
     `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="allday" id="f-allday" value="1" ${t ? (!t.start ? "checked" : "") : (v.start ? "" : "checked")}>時間を決めない（終日・時間未定）</label></div>` +
     fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`) +
@@ -627,10 +683,20 @@ function taskDialog(t, date) {
       const start = allday ? "" : f.start, end = allday ? "" : (f.end || "");
       if (f.routine === "__other" && !f.detail.trim()) return showErr("「その他」を選んだときは内容を記述してください。"), false;
       if (end && start && end < start) return showErr("終了時刻が開始時刻より前になっています。"), false;
-      const data = { date: f.date, start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
+      const multi = !t && f.dmode === "multi";
+      const dates = multi ? (f.dates || "").split(",").filter(Boolean).sort() : [f.date];
+      if (!dates.length || !dates[0]) return showErr(multi ? "日付を1日以上選んでください。" : "日付を入力してください。"), false;
+      if (dates.length > 31) return showErr("一度に登録できるのは31日分までです。"), false;
+      const data = { date: dates[0], start, end, owner: f.owner, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
       if (t) await updateDoc(doc(db, "tasks", t.id), data);
-      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "tasks"), data); memSet("last_task", { start: data.start, end: data.end, routine: data.routine, shareWith: data.shareWith }); }
-      S.selDay = f.date; S.calMonth = f.date.slice(0, 7);
+      else {
+        Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() });
+        if (dates.length === 1) await addDoc(collection(db, "tasks"), data);
+        else { const b = writeBatch(db); dates.forEach(d => b.set(doc(collection(db, "tasks")), { ...data, date: d })); await b.commit(); }
+        memSet("last_task", { start: data.start, end: data.end, routine: data.routine, shareWith: data.shareWith });
+      }
+      S.selDay = dates[0]; S.calMonth = dates[0].slice(0, 7); S.anim = "in";
+      if (dates.length > 1) return dates.length + "日分の業務を登録しました";
     },
     del: t ? () => deleteDoc(doc(db, "tasks", t.id)) : null,
     draft: t ? null : "task"
@@ -639,7 +705,45 @@ function taskDialog(t, date) {
   const ad = form.querySelector("#f-allday"), st = form.querySelector("#f-start"), en = form.querySelector("#f-end");
   const syncAd = () => { [st, en].forEach(x => { x.disabled = ad.checked; x.closest(".field").style.opacity = ad.checked ? .45 : 1; }); };
   ad.addEventListener("change", () => { if (!ad.checked && !st.value) st.value = "17:30"; syncAd(); }); syncAd();
-  if (!t) { restoreDraft(); syncAd(); }
+  if (!t) { wireMultiDate(v.date); restoreDraft(); syncAd(); syncDateMode(); }
+}
+
+/* 複数日の選択：小さなカレンダーで日付をタップして選ぶ */
+let pickMonth = THISMONTH, syncDateMode = () => { };
+function wireMultiDate(initial) {
+  const one = form.querySelector("#d-one"), multi = form.querySelector("#d-multi"), hid = form.querySelector("#f-dates"), box = form.querySelector("#mpick"), sum = form.querySelector("#mpick-sum"), dateIn = form.querySelector("#f-date");
+  pickMonth = (initial || TODAY).slice(0, 7);
+  const getSel = () => new Set((hid.value || "").split(",").filter(Boolean));
+  const setSel = set => { hid.value = [...set].sort().join(","); form.dispatchEvent(new Event("change")); };
+  const draw = (dir) => {
+    const sel = getSel(); const first = parse(pickMonth + "-01"); const start = mondayOf(first);
+    let cells = ["月", "火", "水", "木", "金", "土", "日"].map(d => `<span class="mp-dow">${d}</span>`).join("");
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i); const k = ymd(d);
+      if (i >= 35 && ym(d) !== pickMonth) break;
+      cells += `<button type="button" class="mp-day${ym(d) !== pickMonth ? " out" : ""}${k === TODAY ? " today" : ""}${sel.has(k) ? " on" : ""}" data-pd="${k}" aria-pressed="${sel.has(k)}" aria-label="${md(k)}">${d.getDate()}</button>`;
+    }
+    box.innerHTML = `<div class="mp-head"><button type="button" class="mp-nav" data-pm="-1" aria-label="前の月">‹</button><b>${monthLabel(pickMonth)}</b><button type="button" class="mp-nav" data-pm="1" aria-label="次の月">›</button></div><div class="mp-grid${dir ? " slide-" + dir : ""}">${cells}</div>`;
+    const list = [...sel].sort();
+    sum.innerHTML = list.length ? `<b>${list.length}日</b>選択中：${list.slice(0, 8).map(md).join("・")}${list.length > 8 ? ` ほか${list.length - 8}日` : ""} <button type="button" class="link" data-pclear>すべて解除</button>` : `<span class="muted">まだ選ばれていません</span>`;
+  };
+  box.addEventListener("click", e => {
+    const nav = e.target.closest("[data-pm]"); if (nav) { pickMonth = shiftMonth(pickMonth, +nav.dataset.pm); draw(+nav.dataset.pm > 0 ? "l" : "r"); return; }
+    const b = e.target.closest("[data-pd]"); if (!b) return;
+    const set = getSel(); const k = b.dataset.pd; set.has(k) ? set.delete(k) : set.add(k); setSel(set);
+    if (ym(parse(k)) !== pickMonth) { pickMonth = k.slice(0, 7); }
+    draw();
+    const nb = box.querySelector(`[data-pd="${k}"]`); if (nb) { nb.classList.add("pop"); nb.focus({ preventScroll: true }); }
+  });
+  sum.addEventListener("click", e => { if (e.target.closest("[data-pclear]")) { setSel(new Set()); draw(); } });
+  syncDateMode = () => {
+    const isMulti = form.querySelector("#f-dmode-multi").checked;
+    if (isMulti && !hid.value && dateIn.value) hid.value = dateIn.value;
+    one.hidden = isMulti; multi.hidden = !isMulti; dateIn.required = !isMulti;
+    if (isMulti) { const f = (hid.value.split(",").filter(Boolean).sort()[0]); if (f) pickMonth = f.slice(0, 7); draw(); }
+  };
+  form.querySelectorAll("[name=dmode]").forEach(r => r.addEventListener("change", syncDateMode));
+  syncDateMode();
 }
 
 function ledDialog(r) {
@@ -720,6 +824,7 @@ document.addEventListener("click", async e => {
   const tab = e.target.closest("#tabs [data-tab]"); if (tab) {
     if (S.tab === "settings" && S.settingsDirty && tab.dataset.tab !== "settings" && !S.leaveArmed) { S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します", "warn"); setTimeout(() => S.leaveArmed = false, 4000); return; }
     if (tab.dataset.tab !== "settings") S.settingsDirty = false;
+    if (S.tab !== tab.dataset.tab) S.anim = "in";
     S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } render(); window.scrollTo(0, 0); return; }
   const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) {
     const rm = e.target.closest("[data-rm]"); if (rm && !rm.closest("dialog")) { rm.parentElement.remove(); markDirty(); return; }
@@ -730,8 +835,8 @@ document.addEventListener("click", async e => {
   if (act === "login") return login();
   if (act === "logout") { if (notifyOn()) await disablePush(); await signOut(auth); return; }
   if (act === "notify") return notifyDialog();
-  if (act === "go") { S.tab = a.dataset.tab; render(); window.scrollTo(0, 0); return; }
-  if (act === "mprev" || act === "mnext") { const k = a.dataset.k; S[k] = shiftMonth(S[k], act === "mprev" ? -1 : 1); if (k === "calMonth") S.selDay = S.calMonth === THISMONTH ? TODAY : S.calMonth + "-01"; render(); return; }
+  if (act === "go") { S.anim = "in"; S.tab = a.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  if (act === "mprev" || act === "mnext") { const k = a.dataset.k; S.anim = act === "mprev" ? "r" : "l"; S[k] = shiftMonth(S[k], act === "mprev" ? -1 : 1); if (k === "calMonth") S.selDay = S.calMonth === THISMONTH ? TODAY : S.calMonth + "-01"; render(); return; }
   if (act === "kpi-new") return kpiDialog(null);
   if (act === "kpi-tpl") return kpiDialog(null, KPI_TEMPLATES[+a.dataset.i]);
   if (act === "kpi-edit") return kpiDialog(S.kpis.find(k => k.id === id));
@@ -746,7 +851,7 @@ document.addEventListener("click", async e => {
   }
   if (act === "task-new") return taskDialog(null, a.dataset.d);
   if (act === "task-open") return taskDialog(S.tasks.find(t => t.id === id));
-  if (act === "day") { S.selDay = a.dataset.d; render(); return; }
+  if (act === "day") { S.selDay = a.dataset.d; S.pulse = ".day-panel"; render(); return; }
   if (act === "led-new") return ledDialog(null);
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
@@ -765,7 +870,12 @@ document.addEventListener("change", async e => {
   const act = a.dataset.act, id = a.dataset.id;
   if (act === "onlymine") { S.onlyMine = a.checked; ls.set("cb_onlymine", a.checked ? "1" : "0"); render(); return; }
   try {
-    if (act === "task-done") await updateDoc(doc(db, "tasks", id), { done: a.checked });
+    if (act === "task-done") {
+      const row = a.closest(".task"); if (row) { row.classList.toggle("done", a.checked); row.classList.add("just"); }
+      if (a.checked) toast("完了にしました", "success", { action: { label: "元に戻す", run: () => updateDoc(doc(db, "tasks", id), { done: false }).catch(e => toast(errMsg(e), "error")) } });
+      await new Promise(r => setTimeout(r, reducedMotion() ? 0 : 380));
+      await updateDoc(doc(db, "tasks", id), { done: a.checked });
+    }
     if (act === "kpi-cell") { const raw = a.value.trim(); await updateDoc(doc(db, "kpis", id), new FieldPath("weekly", a.dataset.wk), { value: raw === "" ? null : Number(raw), by: uid() }); toast("保存しました"); }
     if (act === "mem-name") { await updateDoc(doc(db, "members", id), { name: a.value.trim() }); toast("表示名を保存しました"); }
     if (act === "mem-fin") { await updateDoc(doc(db, "members", id), { finance: a.checked }); toast(a.checked ? "収支を見られるようにしました" : "収支を見られないようにしました"); }
