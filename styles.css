@@ -515,15 +515,21 @@ label.checks input{margin-top:.3em;flex:none}
 /* ===== PC：メニューを左側に常に表示 ===== */
 @media (min-width:1024px){
   body.has-nav{padding-left:248px}
-  body.has-nav .menu-btn{display:none}
+  /* PCのメニューボタンは三本線のまま（×にしない） */
+  body.has-nav .menu-btn span{transform:none!important;opacity:1!important}
   body.has-nav .drawer{width:248px;transform:none;visibility:visible;box-shadow:none;border-right:1px solid var(--line);transition:none;z-index:6}
   body.has-nav .drawer-x{display:none}
-  body.has-nav .mast .logo{display:none}
+  body.has-nav:not(.nav-collapsed) .mast .logo{display:none}
   body.has-nav .drawer-bg{display:none}
   body.has-nav .drawer{padding-top:0}
   body.has-nav .drawer-head{box-sizing:border-box;height:var(--mast-h,auto);padding:env(safe-area-inset-top,0px) 16px 0;position:relative}
   body.has-nav .drawer-head::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--navy)}
   body.has-nav.menu-open{overflow:visible}
+  body.has-nav.nav-collapsed{padding-left:0}
+  body.has-nav.nav-collapsed .drawer{transform:translateX(-102%);visibility:hidden}
+  body.has-nav.dock-anim{transition:padding-left .3s var(--ease-out)}
+  body.has-nav.dock-anim .drawer{transition:transform .3s var(--ease-out),visibility 0s linear var(--vis-delay,0s)}
+  body.has-nav.dock-anim.nav-collapsed .drawer{--vis-delay:.3s}
 }
 
 .kpi-tools{display:flex;gap:14px;margin-top:4px;font-size:.82rem}

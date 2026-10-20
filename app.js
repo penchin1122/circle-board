@@ -282,15 +282,29 @@ const sumBy = (rows, type) => rows.filter(r => r.type === type).reduce((a, r) =>
 /* PC（横幅1024px以上）ではメニューを左側に常に表示する */
 const DESK = window.matchMedia ? matchMedia("(min-width:1024px)") : { matches: false };
 const deskNav = () => DESK.matches && document.body.classList.contains("has-nav");
+/* PCで左メニューを閉じたかどうか（次に開いたときも覚えておく） */
+let navCollapsed = (() => { try { return localStorage.getItem("navCollapsed") === "1"; } catch (_) { return false; } })();
+document.body.classList.toggle("nav-collapsed", navCollapsed);
+function setDock(open) {
+  navCollapsed = !open; try { localStorage.setItem("navCollapsed", navCollapsed ? "1" : "0"); } catch (_) { }
+  document.body.classList.add("dock-anim"); document.body.classList.toggle("nav-collapsed", navCollapsed);
+  clearTimeout(setDock.t); setDock.t = setTimeout(() => document.body.classList.remove("dock-anim"), 400);
+  setMenu(false);
+}
 function setMenu(open) {
   const d = $("#drawer"), bg = $("#drawer-bg"), b = $("#menu-btn"); if (!d) return;
-  if (deskNav()) { d.classList.remove("open"); bg.classList.remove("open"); document.body.classList.remove("menu-open"); d.removeAttribute("inert"); b.setAttribute("aria-expanded", "false"); return; }
+  if (deskNav()) {
+    d.classList.remove("open"); bg.classList.remove("open"); document.body.classList.remove("menu-open");
+    if (navCollapsed) { d.setAttribute("inert", ""); if (d.contains(document.activeElement)) b.focus({ preventScroll: true }); } else d.removeAttribute("inert");
+    b.setAttribute("aria-expanded", String(!navCollapsed)); b.setAttribute("aria-label", navCollapsed ? "メニューを開く" : "メニューを閉じる"); return;
+  }
+  b.setAttribute("aria-label", open ? "メニューを閉じる" : "メニューを開く");
   d.classList.toggle("open", open); bg.classList.toggle("open", open); document.body.classList.toggle("menu-open", open);
   if (open) { d.removeAttribute("inert"); b.setAttribute("aria-expanded", "true"); setTimeout(() => { const c = d.querySelector('[aria-current="page"]') || d.querySelector("button"); if (c) c.focus({ preventScroll: true }); }, 60); }
   else { d.setAttribute("inert", ""); b.setAttribute("aria-expanded", "false"); if (d.contains(document.activeElement)) b.focus({ preventScroll: true }); }
 }
 document.addEventListener("click", e => {
-  if (e.target.closest("#menu-btn")) { setMenu(!$("#drawer").classList.contains("open")); return; }
+  if (e.target.closest("#menu-btn")) { if (deskNav()) setDock(navCollapsed); else setMenu(!$("#drawer").classList.contains("open")); return; }
   if (e.target.closest("#drawer-bg") || e.target.closest('[data-menu="close"]')) setMenu(false);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#drawer").classList.contains("open")) setMenu(false); });
