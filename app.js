@@ -29,7 +29,29 @@ function meetingsOfMonth(m) {
 const NEXTMTG = [...meetingsOfMonth(THISMONTH), ...meetingsOfMonth(shiftMonth(THISMONTH, 1))].find(x => x >= TODAY);
 const mtgLabel = d => { const mt = meetingsOfMonth(d.slice(0, 7)); return (mt[0] === d ? "第2木" : "第4木"); };
 const ls = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
-function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 2400); }
+/* トースト：type = "success" | "error" | "info" | "warn"。最大3件まで重ねて表示 */
+const TOAST_ICON = {
+  success: '<path d="M20 6 9 17l-5-5"/>',
+  error: '<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/>',
+  warn: '<path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17.5v.01"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/>'
+};
+function toast(msg, type = "success", opts = {}) {
+  const box = $("#toasts"); if (!box) return;
+  const el = document.createElement("div");
+  el.className = "toast t-" + type; el.setAttribute("role", type === "error" ? "alert" : "status");
+  el.innerHTML = `<svg class="t-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TOAST_ICON[type] || TOAST_ICON.info}</svg><span class="t-msg"></span>${opts.action ? `<button type="button" class="t-act"></button>` : ""}<button type="button" class="t-x" aria-label="閉じる">×</button>`;
+  el.querySelector(".t-msg").textContent = msg;
+  const close = () => { if (el.dataset.closing) return; el.dataset.closing = "1"; el.classList.add("out"); setTimeout(() => el.remove(), 200); };
+  if (opts.action) { const b = el.querySelector(".t-act"); b.textContent = opts.action.label; b.addEventListener("click", () => { close(); opts.action.run(); }); }
+  el.querySelector(".t-x").addEventListener("click", close);
+  box.appendChild(el);
+  while (box.children.length > 3) box.firstElementChild.remove();
+  const ms = opts.duration || (type === "error" ? 6000 : opts.action ? 5000 : 2800);
+  let timer = setTimeout(close, ms);
+  el.addEventListener("pointerenter", () => clearTimeout(timer));
+  el.addEventListener("pointerleave", () => { timer = setTimeout(close, 1500); });
+}
 function errMsg(e) {
   const c = e && e.code || "";
   if (c.includes("permission-denied")) return "この操作をする権限がありません。";
@@ -93,7 +115,7 @@ function resetAll() { if (memberUnsub) { memberUnsub(); memberUnsub = null; } st
 if (configured) {
   getRedirectResult(auth).catch(e => console.warn(e));
   onAuthStateChanged(auth, async u => {
-    resetAll(); S.user = u;
+    resetAll(); S.user = u; S.authReady = true;
     if (!u) { render(); return; }
     S.isAdmin = !!u.email && ADMIN_EMAILS.map(e => e.toLowerCase()).includes(u.email.toLowerCase());
     const ref = doc(db, "members", u.uid);
@@ -139,7 +161,7 @@ async function login() {
   catch (e) {
     if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) return signInWithRedirect(auth, p);
     if (e && e.code === "auth/popup-closed-by-user") return;
-    toast(errMsg(e));
+    toast(errMsg(e), "error");
   }
 }
 
@@ -218,18 +240,19 @@ function render() {
   const main = $("#main");
   if (!configured) { main.innerHTML = `<div class="center"><h2>初期設定が必要です</h2><p class="muted">config.js にFirebaseの設定値を入れてください。手順は README.md にあります。</p></div>`; return; }
   if (S.fatal) { main.innerHTML = `<div class="center"><h2>読み込めませんでした</h2><p class="muted">${esc(S.fatal)}</p></div>`; return; }
+  if (!S.authReady) { main.innerHTML = skeleton(S.tab); return; }
   if (!S.user) {
     main.innerHTML = `<div class="center"><h2>運営メンバー専用ページです</h2><p class="muted">Googleアカウントでログインしてください。はじめての方は、ログイン後に管理者の承認を受けると使えるようになります。</p>
       <p><button class="gbtn" type="button" data-act="login"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h11.8c-.5 2.7-2 5-4.4 6.6v5.5h7.1c4.1-3.8 6.5-9.5 6.5-16.1z"/><path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.4l-7.1-5.5c-2 1.3-4.5 2.1-7.4 2.1-5.7 0-10.6-3.9-12.3-9.1H4.4v5.7C8 41 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.7 28.1c-.4-1.3-.7-2.7-.7-4.1s.3-2.8.7-4.1v-5.7H4.4C2.9 17.2 2 20.5 2 24s.9 6.8 2.4 9.8l7.3-5.7z"/><path fill="#EA4335" d="M24 10.8c3.2 0 6.1 1.1 8.4 3.3l6.3-6.3C34.9 4.2 29.9 2 24 2 15.4 2 8 7 4.4 14.2l7.3 5.7c1.7-5.2 6.6-9.1 12.3-9.1z"/></svg>Googleでログイン</button></p></div>`;
     return;
   }
-  if (!S.member && !S.isAdmin) { main.innerHTML = `<div class="empty"><p>アカウント情報を確認しています…</p></div>`; return; }
+  if (!S.member && !S.isAdmin) { main.innerHTML = skeleton(S.tab); return; }
   if (!isActive()) {
     const stopped = S.member && S.member.status === "inactive";
     main.innerHTML = `<div class="center"><h2>${stopped ? "利用が停止されています" : "承認待ちです"}</h2><p class="muted">${stopped ? "管理者に確認してください。" : `管理者（佐藤）が承認すると、このページが使えるようになります。承認されたら自動で切り替わります。`}</p><p class="muted" style="font-size:.85rem">ログイン中：${esc(S.user.email || "")}</p></div>`;
     return;
   }
-  if (!S.need.length || !S.need.every(k => S.ready[k])) { main.innerHTML = `<div class="empty"><p>データを読み込んでいます…</p></div>`; return; }
+  if (!S.need.length || !S.need.every(k => S.ready[k])) { if (!main.querySelector(".sk-wrap")) main.innerHTML = skeleton(S.tab); return; }
   const views = { home: vHome, kpi: vKpi, cal: vCal, money: vMoney, members: vMembers, settings: vSettings };
   if (S.tab === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
@@ -255,8 +278,23 @@ async function seedMonth(m) {
     b.set(doc(collection(db, "kpis")), { name: k.name, unit: k.unit || "", mode: k.mode, target: k.target ?? null, owner: k.owner, viewers: k.viewers || ["all"], month: m, weekly: {}, order: 100 + i, createdAt: serverTimestamp() }); n++;
   });
   b.set(doc(db, "config", "main"), { kpiSeeded: arrayUnion(m) }, { merge: true });
-  try { await b.commit(); if (n) toast(monthLabel(m) + "のKPIを" + n + "件用意しました。目標を設定してください"); }
+  try { await b.commit(); if (n) toast(monthLabel(m) + "のKPIを" + n + "件用意しました。目標を設定してください", "info", { duration: 5000 }); }
   catch (e) { seeding.delete(m); console.warn(e); }
+}
+/* スケルトン：読み込み中に、実際のレイアウトに近い形のグレーの枠を出す */
+const sk = (w, h = 14, extra = "") => `<span class="sk" style="width:${w};height:${h}px;${extra}"></span>`;
+const skLines = n => Array.from({ length: n }, (_, i) => `<div class="sk-row">${sk("4.5em")}<div class="sk-col">${sk(["70%", "55%", "62%"][i % 3])}${sk("38%", 10)}</div></div>`).join("");
+const skPanel = (rows, title = "40%") => `<section class="panel" aria-hidden="true"><div style="margin-bottom:14px">${sk(title, 16)}</div>${skLines(rows)}</section>`;
+const skKpi = n => Array.from({ length: n }, () => `<div class="kpi">${sk("45%", 16)}${sk("5em", 16)}<div style="grid-column:1/-1">${sk("100%", 10, "border-radius:5px")}</div>${sk("60%", 10)}</div>`).join("");
+function skeleton(tab) {
+  const head = `<div class="bar" aria-hidden="true">${sk("8em", 24)}<span style="margin-left:auto"></span>${sk("9em", 34, "border-radius:6px")}</div>`;
+  let body;
+  if (tab === "kpi") body = `<section class="panel">${skKpi(5)}</section>`;
+  else if (tab === "cal") body = `<div class="callayout"><div class="cal sk-cal">${Array.from({ length: 35 }, () => `<div class="day">${sk("1.2em", 12)}</div>`).join("")}</div>${skPanel(3, "30%")}</div>`;
+  else if (tab === "money") body = `<div class="figs">${Array.from({ length: 4 }, () => `<div class="fig">${sk("40%", 11)}<div style="margin-top:8px">${sk("70%", 22)}</div></div>`).join("")}</div>${skPanel(5, "25%")}`;
+  else if (tab === "members" || tab === "settings") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
+  else body = `<div class="grid2"><div class="stack">${skPanel(2, "35%")}${skPanel(1, "45%")}</div><div class="stack"><section class="panel">${sk("35%", 16)}<div style="margin-top:14px">${skKpi(3)}</div></section></div></div>`;
+  return `<div class="sk-wrap" role="status" aria-label="読み込み中">${head}${body}<span class="visually-hidden">読み込み中です</span></div>`;
 }
 function monthNav(key) { return `<div class="monthnav"><button type="button" data-act="mprev" data-k="${key}" aria-label="前の月">‹</button><span>${monthLabel(S[key])}</span><button type="button" data-act="mnext" data-k="${key}" aria-label="次の月">›</button></div>`; }
 
@@ -444,7 +482,7 @@ async function disablePush() {
 }
 function bindForeground() {
   if (fgBound || !fbApp) return; fgBound = true;
-  try { onMessage(getMessaging(fbApp), p => { const n = p.notification || {}; toast((n.title ? n.title + "：" : "") + (n.body || "")); }); } catch (e) { }
+  try { onMessage(getMessaging(fbApp), p => { const n = p.notification || {}; toast((n.title ? n.title + "：" : "") + (n.body || ""), "info", { duration: 6000 }); }); } catch (e) { }
 }
 function notifyDialog() {
   const c = cfg(); const on = notifyOn();
@@ -459,7 +497,7 @@ function notifyDialog() {
   try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); }
   const onB = form.querySelector("#n-on"), offB = form.querySelector("#n-off");
   if (onB) onB.addEventListener("click", async () => { onB.disabled = true; onB.textContent = "登録しています…"; try { await enablePush(); closeDlg(); toast("この端末で通知を受け取ります"); render(); } catch (e) { showErr(e.message || errMsg(e)); onB.disabled = false; onB.textContent = "この端末で受け取る"; } });
-  if (offB) offB.addEventListener("click", async () => { offB.disabled = true; await disablePush(); closeDlg(); toast("この端末への通知を止めました"); render(); });
+  if (offB) offB.addEventListener("click", async () => { offB.disabled = true; await disablePush(); closeDlg(); toast("この端末への通知を止めました", "info"); render(); });
 }
 
 /* ================= dialogs ================= */
@@ -669,7 +707,7 @@ function importDialog() {
       const have = new Set(S.ledger.map(keyOf));
       const fresh = items.filter(x => !have.has(keyOf(x)));
       const skipped = items.length - fresh.length;
-      if (!fresh.length) { closeDlg(); toast("すべて登録済みでした（" + skipped + "件）。追加はありません"); return false; }
+      if (!fresh.length) { closeDlg(); toast("すべて登録済みでした（" + skipped + "件）。追加はありません", "info"); return false; }
       items.length = 0; items.push(...fresh); S.importSkipped = skipped;
       for (let i = 0; i < items.length; i += 400) { const b = writeBatch(db); items.slice(i, i + 400).forEach(x => b.set(doc(collection(db, "ledger")), x)); await b.commit(); }
       closeDlg(); toast(items.length + "件を取り込みました" + (S.importSkipped ? "（登録済みの" + S.importSkipped + "件は飛ばしました）" : "")); return false;
@@ -680,7 +718,7 @@ function importDialog() {
 /* ================= events ================= */
 document.addEventListener("click", async e => {
   const tab = e.target.closest("#tabs [data-tab]"); if (tab) {
-    if (S.tab === "settings" && S.settingsDirty && tab.dataset.tab !== "settings" && !S.leaveArmed) { S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します"); setTimeout(() => S.leaveArmed = false, 4000); return; }
+    if (S.tab === "settings" && S.settingsDirty && tab.dataset.tab !== "settings" && !S.leaveArmed) { S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します", "warn"); setTimeout(() => S.leaveArmed = false, 4000); return; }
     if (tab.dataset.tab !== "settings") S.settingsDirty = false;
     S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } render(); window.scrollTo(0, 0); return; }
   const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) {
@@ -699,11 +737,11 @@ document.addEventListener("click", async e => {
   if (act === "kpi-edit") return kpiDialog(S.kpis.find(k => k.id === id));
   if (act === "kpi-del") {
     if (S.armDel !== id) { S.armDel = id; render(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; render(); }, 5000); return; }
-    S.armDel = null; try { await deleteDoc(doc(db, "kpis", id)); toast("KPIを削除しました"); } catch (err) { toast(errMsg(err)); } return;
+    S.armDel = null; try { await deleteDoc(doc(db, "kpis", id)); toast("KPIを削除しました"); } catch (err) { toast(errMsg(err), "error"); } return;
   }
   if (act === "kpi-carry") {
     const prev = S.kpis.filter(k => k.month === shiftMonth(S.kpiMonth, -1));
-    try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, target: k.target, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err)); }
+    try { const b = writeBatch(db); prev.forEach(k => b.set(doc(collection(db, "kpis")), { name: k.name, target: k.target, unit: k.unit || "", mode: k.mode, owner: k.owner, viewers: k.viewers || ["all"], month: S.kpiMonth, weekly: {}, order: k.order || Date.now(), createdAt: serverTimestamp() })); await b.commit(); toast("先月のKPIを引き継ぎました"); } catch (err) { toast(errMsg(err), "error"); }
     return;
   }
   if (act === "task-new") return taskDialog(null, a.dataset.d);
@@ -712,13 +750,13 @@ document.addEventListener("click", async e => {
   if (act === "led-new") return ledDialog(null);
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
-  if (act === "mem-color") { try { await updateDoc(doc(db, "members", id), { color: a.dataset.c }); toast("色を変更しました"); } catch (err) { toast(errMsg(err)); } return; }
-  if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err)); } return; }
+  if (act === "mem-color") { try { await updateDoc(doc(db, "members", id), { color: a.dataset.c }); toast("色を変更しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
+  if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "save-settings") {
     const out = {}; ["routines", "expenseCats", "incomeCats", "methods"].forEach(k => { out[k] = [...document.querySelectorAll(`[data-list="${k}"] input`)].map(i => i.value.trim()).filter(Boolean); });
     const nt = document.getElementById("s-notifyTime"), ne = document.getElementById("s-notifyEnabled"), vk = document.getElementById("s-vapid");
     if (nt) out.notifyTime = nt.value; if (ne) out.notifyEnabled = ne.checked; if (vk) out.vapidKey = vk.value.trim();
-    try { await setDoc(doc(db, "config", "main"), out, { merge: true }); S.settingsDirty = false; toast("設定を保存しました"); render(); } catch (err) { toast(errMsg(err)); }
+    try { await setDoc(doc(db, "config", "main"), out, { merge: true }); S.settingsDirty = false; toast("設定を保存しました"); render(); } catch (err) { toast(errMsg(err), "error"); }
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Enter") { const r = e.target.closest && e.target.closest("tr[data-act=led-edit]"); if (r) ledDialog(S.ledger.find(x => x.id === r.dataset.id)); } });
@@ -731,7 +769,7 @@ document.addEventListener("change", async e => {
     if (act === "kpi-cell") { const raw = a.value.trim(); await updateDoc(doc(db, "kpis", id), new FieldPath("weekly", a.dataset.wk), { value: raw === "" ? null : Number(raw), by: uid() }); toast("保存しました"); }
     if (act === "mem-name") { await updateDoc(doc(db, "members", id), { name: a.value.trim() }); toast("表示名を保存しました"); }
     if (act === "mem-fin") { await updateDoc(doc(db, "members", id), { finance: a.checked }); toast(a.checked ? "収支を見られるようにしました" : "収支を見られないようにしました"); }
-  } catch (err) { if (a.type === "checkbox") a.checked = !a.checked; toast(errMsg(err)); }
+  } catch (err) { if (a.type === "checkbox") a.checked = !a.checked; toast(errMsg(err), "error"); }
 });
 
 /* ---------- 並べ替え（ドラッグ＆ドロップ・タッチ・キーボード対応） ---------- */

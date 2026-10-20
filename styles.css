@@ -163,7 +163,7 @@ dialog::backdrop{background:rgba(8,18,38,.55)}
 .checks{display:flex;flex-wrap:wrap;gap:6px 14px}
 .checks label{font-weight:400;font-size:.88rem;display:inline-flex;gap:5px;align-items:center}
 .err{grid-column:1/-1;color:var(--bad);font-size:.85rem;margin:0}
-.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 18px;border-radius:999px;font-size:.88rem;z-index:20;max-width:calc(100vw - 32px)}
+
 .banner{background:var(--warn-soft);color:var(--warn);border-radius:var(--radius);padding:10px 14px;font-size:.88rem;margin-bottom:16px}
 .listedit{display:flex;flex-direction:column;gap:6px}
 .listedit .row{display:flex;gap:6px}
@@ -230,3 +230,29 @@ dialog::backdrop{background:rgba(8,18,38,.55)}
 /* 通知ボタンの未登録マーク */
 .ghost{position:relative}
 .dot-off{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+
+/* ===== トースト ===== */
+.toasts{position:fixed;z-index:30;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;width:min(420px,calc(100vw - 32px));pointer-events:none}
+.toast{pointer-events:auto;display:flex;align-items:flex-start;gap:10px;background:#FFFFFF;color:var(--fg);border:1px solid var(--line);border-left:4px solid var(--tc,var(--accent));border-radius:8px;padding:10px 10px 10px 12px;box-shadow:0 8px 24px rgba(15,45,107,.14);font-size:.88rem;line-height:1.55;animation:t-in .22s ease-out}
+.toast.out{animation:t-out .2s ease-in forwards}
+.toast .t-ic{flex:none;color:var(--tc,var(--accent));margin-top:1px}
+.toast .t-msg{flex:1;min-width:0;overflow-wrap:anywhere;white-space:pre-line}
+.toast .t-act{flex:none;background:none;border:0;color:var(--accent);font-weight:700;cursor:pointer;padding:0 4px;font-size:.85rem}
+.toast .t-x{flex:none;background:none;border:0;color:var(--muted);cursor:pointer;font-size:1.1rem;line-height:1;padding:0 2px}
+.toast.t-success{--tc:var(--good)} .toast.t-error{--tc:var(--bad)} .toast.t-warn{--tc:var(--warn)} .toast.t-info{--tc:var(--accent)}
+@keyframes t-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes t-out{to{opacity:0;transform:translateY(6px)}}
+@media (min-width:861px){.toasts{left:auto;right:24px;transform:none;bottom:24px}}
+
+/* ===== スケルトン ===== */
+.sk{display:block;max-width:100%;border-radius:4px;background:linear-gradient(90deg,#EDF1F6 0%,#E1E7EF 40%,#EDF1F6 80%);background-size:300% 100%;animation:sk-shine 1.4s ease-in-out infinite}
+.sk-wrap .panel{min-height:120px}
+.sk-row{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.sk-row:first-of-type{border-top:0}
+.sk-col{flex:1;display:flex;flex-direction:column;gap:8px}
+.sk-cal .day{cursor:default;min-height:90px}
+.bar .sk{flex:none}
+@keyframes sk-shine{0%{background-position:100% 0}100%{background-position:0 0}}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}.toast,.toast.out{animation:none}}
+@media (max-width:600px){.sk-cal .day{min-height:56px}}
