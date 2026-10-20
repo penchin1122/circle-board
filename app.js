@@ -279,8 +279,12 @@ const sumBy = (rows, type) => rows.filter(r => r.type === type).reduce((a, r) =>
 /* ================= render ================= */
 /* ===== アニメーション ===== */
 /* ハンバーガーメニュー（左から出るドロワー） */
+/* PC（横幅1024px以上）ではメニューを左側に常に表示する */
+const DESK = window.matchMedia ? matchMedia("(min-width:1024px)") : { matches: false };
+const deskNav = () => DESK.matches && document.body.classList.contains("has-nav");
 function setMenu(open) {
   const d = $("#drawer"), bg = $("#drawer-bg"), b = $("#menu-btn"); if (!d) return;
+  if (deskNav()) { d.classList.remove("open"); bg.classList.remove("open"); document.body.classList.remove("menu-open"); d.removeAttribute("inert"); b.setAttribute("aria-expanded", "false"); return; }
   d.classList.toggle("open", open); bg.classList.toggle("open", open); document.body.classList.toggle("menu-open", open);
   if (open) { d.removeAttribute("inert"); b.setAttribute("aria-expanded", "true"); setTimeout(() => { const c = d.querySelector('[aria-current="page"]') || d.querySelector("button"); if (c) c.focus({ preventScroll: true }); }, 60); }
   else { d.setAttribute("inert", ""); b.setAttribute("aria-expanded", "false"); if (d.contains(document.activeElement)) b.focus({ preventScroll: true }); }
@@ -290,6 +294,7 @@ document.addEventListener("click", e => {
   if (e.target.closest("#drawer-bg") || e.target.closest('[data-menu="close"]')) setMenu(false);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#drawer").classList.contains("open")) setMenu(false); });
+if (DESK.addEventListener) DESK.addEventListener("change", () => setMenu(false));
 function countUp(el) {
   const to = Number(el.dataset.v); const fmt = el.dataset.f; if (!isFinite(to)) return;
   const sign = el.dataset.sign || ""; const t0 = performance.now(), dur = 700;
@@ -308,13 +313,13 @@ const cu = (v, f, sign = "") => `<span class="cu" data-v="${Math.abs(Number(v) |
 function renderChrome() {
   const tools = $("#mast-tools"), tabs = $("#tabs"), foot = $("#drawer-foot"), mb = $("#menu-btn");
   if (!S.user || !isActive()) {
-    tabs.innerHTML = ""; foot.innerHTML = ""; mb.hidden = true; setMenu(false);
+    tabs.innerHTML = ""; foot.innerHTML = ""; mb.hidden = true; document.body.classList.remove("has-nav"); setMenu(false);
     tools.innerHTML = S.user ? `<span class="me">${esc(S.user.email || "")}</span><button class="ghost" type="button" data-act="logout">ログアウト</button>` : "";
     return;
   }
   const vis = tabsVisible(); if (!vis.some(([k]) => k === S.tab)) S.tab = "home";
   const pending = S.isAdmin ? S.members.filter(m => m.status === "pending").length : 0;
-  mb.hidden = false;
+  mb.hidden = false; if (!document.body.classList.contains("has-nav")) { document.body.classList.add("has-nav"); setMenu(false); }
   tabs.innerHTML = vis.map(([k, l]) => `<button type="button" data-tab="${k}" ${k === S.tab ? 'aria-current="page"' : ""}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TAB_ICON[k] || ""}</svg><span>${l}</span>${k === "admin" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
   mb.classList.toggle("has-badge", pending > 0);
   const meName = memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || "");
@@ -426,7 +431,7 @@ function vHome() {
       ${myLate.length ? `<section class="panel"><h3>自分の未対応<span class="hint">${myLate.length}件</span></h3>${myLate.map(t => taskItem(t, { late: true, showDate: true })).join("")}</section>` : ""}
     </div>
     <div class="stack">
-      <section class="panel"><h3>今月のKPI<button class="link hint" type="button" data-act="go" data-tab="kpi">詳しく見る</button></h3>
+      <section class="panel"><h3>今月のKPI<button class="link hint" type="button" data-act="go" data-tab="kpi">進捗を入力</button></h3>
         ${ks.length ? ks.map(k => kpiRow(k, false)).join("") : `<p class="muted" style="margin:0">${canManage() ? "今月のKPIはまだ設定されていません。" : "表示できる今月のKPIはありません。"}</p>`}
       </section>
       ${fin}
@@ -446,20 +451,17 @@ function vKpi() {
       <div class="tpls">${KPI_TEMPLATES.map((t, i) => `<button class="btn sec small" type="button" data-act="kpi-tpl" data-i="${i}">${esc(t.name)}</button>`).join("")}</div></div>`;
   }
   const rows = ks.map(k => {
-    const w = k.weekly || {}; const s = kpiStatus(k); const editable = canManage() || (k.owner === uid() && canWrite());
-    return `<tr><td><b>${esc(k.name)}</b><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}</div></td>
+    const w = k.weekly || {}; const editable = canManage() || (k.owner === uid() && canWrite());
+    const tools = canManage() ? `<div class="kpi-tools"><button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button><button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button></div>` : "";
+    const tgt = Number(k.target) > 0 ? `目標 ${num(k.target)}${esc(k.unit || "")}` : "目標未設定";
+    return `<tr><td><b>${esc(k.name)}</b>${isTrack(k) ? ` <span class="pill plain">記録のみ</span>` : ""}<div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}・${tgt}</div>${tools}</td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
-        return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}
-      ${isTrack(k) ? (() => { const t = trackInfo(k); return `<td class="num">${t.last ? `<b>${num(t.last.v)}</b>` : "—"}${Number(k.target) > 0 ? ` / ${num(k.target)}` : ""}</td><td>${t.delta !== null ? deltaTag(t, k.unit) : `<span class="pill plain">記録のみ</span>`}</td>`; })()
-        : `<td class="num"><b>${num(s.a.v)}</b> / ${s.t > 0 ? num(s.t) : "—"}</td><td><span class="pill ${s.st.c}">${s.t > 0 ? Math.round(s.rate * 100) + "%" : "目標未設定"}</span></td>`}</tr>`;
+        return `<td class="num${wk === NEXTMTG ? " now" : ""}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}</tr>`;
   }).join("");
-  return head + `<div class="stack">
-    <section class="panel"><h3>月次目標の進捗<span class="hint">縦線は今日時点の目安ペース</span></h3>${ks.filter(k => !isTrack(k)).map(k => kpiRow(k, true)).join("") || `<p class="muted" style="margin:0">目標を設定しているKPIはありません。</p>`}</section>
-    ${ks.some(isTrack) ? `<section class="panel"><h3>記録のみの指標<span class="hint">最新値／目標と、前回からの増減</span></h3><div class="track-grid">${ks.filter(isTrack).map(k => kpiRow(k, true)).join("")}</div></section>` : ""}
-    <section><h3 style="font-size:.95rem;margin:0 0 8px">ミーティング・月末ごとの進捗</h3>
-      <p class="muted" style="font-size:.82rem;margin:0 0 8px">第2・第4木曜日の定例MTGと月末の3回、各KPIの担当者が実績を入力します。入力すると自動で保存されます。「最新値」はその時点の数値（例：会員数）、「合計」は前回から増えた分を入れてください（第2木＝月初から、第4木＝第2木の翌日から、月末＝第4木の翌日から月末まで）。</p>
-      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回" : ""}</th>`).join("")}<th class="num">実績 / 目標</th><th>達成率・増減</th></tr></thead><tbody>${rows}</tbody></table></div>
-    </section></div>`;
+  return head + `<section class="panel kpi-entry"><h3>ミーティング・月末ごとの進捗入力<span class="hint">入力すると自動で保存。進捗はホームで確認</span></h3>
+      <p class="muted" style="font-size:.82rem;margin:0 0 10px">第2・第4木曜日の定例MTGと月末の3回、各KPIの担当者が実績を入力します。「最新値」はその時点の数値（例：フォロワー数）、「合計」は前回から増えた分を入れてください（第2木＝月初から、第4木＝第2木の翌日から、月末＝第4木の翌日から月末まで）。</p>
+      <div class="tablewrap"><table><thead><tr><th>指標</th>${weeks.map(wk => `<th class="num${wk === NEXTMTG ? " now" : ""}">${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}${wk === NEXTMTG ? "<br>次回" : ""}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>
+    </section>`;
 }
 
 function vCal() {
