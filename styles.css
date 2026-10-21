@@ -592,11 +592,6 @@ label.checks input{margin-top:.3em;flex:none}
 .kd-row:first-child{border-top:0}
 .kd-row.now{background:var(--accent-soft)}
 .kd-row .pill{margin-left:6px}
-.zoom-opts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-.zoom-opt{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;border:1px solid var(--line);border-radius:8px;background:#FFFFFF;font-size:.8rem;font-weight:700;color:var(--fg);cursor:pointer;transition:background-color .15s,border-color .15s}
-.zoom-opt span{line-height:1.3;font-weight:700}
-.zoom-opt:hover{background:var(--surface-2)}
-.zoom-opt.on{border-color:var(--accent);background:var(--accent-soft);color:var(--navy)}
 .df-btns{display:flex;gap:8px;flex-wrap:wrap}
 
 /* ===== スワイプで閉じる ===== */
@@ -613,3 +608,9 @@ label.checks input{margin-top:.3em;flex:none}
   .task .time{grid-column:1/-1;min-width:0}
   .task .sub{grid-column:1/-1}
 }
+
+/* 拡大・縮小させない：2本指拡大とダブルタップ拡大を無効にする（スクロールはできる） */
+html,body{touch-action:pan-x pan-y}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* iPhoneは16px未満の入力欄を押すと自動で拡大するので、入力欄は16px以上にする */
+@media (max-width:860px){input,select,textarea{font-size:16px!important}}

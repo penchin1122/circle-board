@@ -31,11 +31,10 @@ const NEXTMTG = [...meetingsOfMonth(THISMONTH), ...meetingsOfMonth(shiftMonth(TH
 const mtgLabel = d => { const mt = meetingsOfMonth(d.slice(0, 7)); return mt[0] === d ? "第2木" : mt[1] === d ? "第4木" : "月末"; };
 const mtgName = d => mtgLabel(d) === "月末" ? "月末" : "MTG";
 const ls = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
-/* 表示サイズ（アプリ全体の拡大・縮小）。端末ごとに保存 */
-const ZOOMS = [[0.9, "小"], [1, "標準"], [1.15, "大"], [1.3, "特大"]];
-const uiZoom = () => { const v = Number(ls.get("uiZoom", "1")); return ZOOMS.some(([z]) => z === v) ? v : 1; };
-function applyZoom() { const z = uiZoom(); document.documentElement.style.zoom = z === 1 ? "" : String(z); document.documentElement.dataset.zoom = String(z); }
-applyZoom();
+/* 拡大・縮小させない（スマホの2本指拡大・ダブルタップ拡大を止める） */
+try { localStorage.removeItem("uiZoom"); } catch (_) { }
+["gesturestart", "gesturechange", "gestureend"].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+document.addEventListener("touchmove", e => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
 /* トースト：type = "success" | "error" | "info" | "warn"。同時に出すのは1つだけ（新しいものが前のものと入れ替わる） */
 const TOAST_ICON = {
   success: '<path d="M20 6 9 17l-5-5"/>',
@@ -350,7 +349,7 @@ function renderChrome() {
   tabs.innerHTML = vis.map(([k, l]) => `<button type="button" data-tab="${k}" ${k === S.tab ? 'aria-current="page"' : ""}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TAB_ICON[k] || ""}</svg><span>${l}</span>${k === "admin" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
   mb.classList.toggle("has-badge", pending > 0);
   const meName = memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || "");
-  foot.innerHTML = `<div class="df-me"><b>${esc(meName)}</b><span class="muted">${esc(roleLabel(myRole()))}・${esc(S.user.email || "")}</span></div><div class="df-btns"><button class="btn sec small" type="button" data-act="zoom">表示サイズ</button><button class="btn sec small" type="button" data-act="logout">ログアウト</button></div>`;
+  foot.innerHTML = `<div class="df-me"><b>${esc(meName)}</b><span class="muted">${esc(roleLabel(myRole()))}・${esc(S.user.email || "")}</span></div><div class="df-btns"><button class="btn sec small" type="button" data-act="logout">ログアウト</button></div>`;
   const cur = TABS_ALL.find(([k]) => k === S.tab);
   const pageName = cur ? cur[1].replace(/（.*）/, "") : "運営ボード";
   $("#page-title").textContent = pageName; document.title = pageName + "｜運営ボード";
@@ -818,12 +817,6 @@ function sheetContent(sh) {
       <div class="kd-list">${rows}</div>`,
       foot: canIn ? `<div class="sp"><button class="btn" type="button" data-act="go" data-tab="kpi">進捗を入力する</button></div>` : "" };
   }
-  if (sh.kind === "zoom") {
-    const z = uiZoom();
-    return { title: "表示サイズ", body: `<p class="muted" style="margin:0 0 10px;font-size:.85rem">文字やボタンをまとめて大きく・小さくします。この端末だけに保存されます。</p>
-      <div class="zoom-opts">${ZOOMS.map(([v, l]) => `<button type="button" class="zoom-opt${v === z ? " on" : ""}" data-act="zoom-set" data-v="${v}" aria-pressed="${v === z}"><span style="font-size:${Math.round(15 * v)}px">あ</span>${l}</button>`).join("")}</div>
-      <p class="muted" style="margin:12px 0 0;font-size:.78rem">スマホは2本指で広げても拡大できます。</p>` };
-  }
   return null;
 }
 
@@ -1160,8 +1153,6 @@ document.addEventListener("click", async e => {
   if (act === "login") return login();
   if (act === "logout") { if (notifyOn()) await disablePush(); await signOut(auth); return; }
   if (act === "notify") return notifyDialog();
-  if (act === "zoom") { setMenu(false); return openSheet({ kind: "zoom" }); }
-  if (act === "zoom-set") { ls.set("uiZoom", a.dataset.v); applyZoom(); refreshSheet(); toast("表示サイズを変えました"); return; }
   if (act === "mpick") { const k = a.dataset.k; return openSheet({ kind: "month", key: k, y: Number(S[k].slice(0, 4)) }); }
   if (act === "mp-year") { S.sheet.y += Number(a.dataset.step); refreshSheet(); return; }
   if (act === "mp-pick") { const k = S.sheet.key; const v = a.dataset.v; closeDlg(); if (v !== S[k]) { S.anim = v < S[k] ? "r" : "l"; S[k] = v; if (k === "calMonth") S.selDay = v === THISMONTH ? TODAY : v + "-01"; render(); } return; }
