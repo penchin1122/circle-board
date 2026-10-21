@@ -2,9 +2,9 @@ name: 朝の通知
 
 on:
   schedule:
-    # 15分ごと（日本時間 5:00〜11:45）。設定タブの時刻を過ぎた最初の回で1日1回だけ送る
-    - cron: "*/15 20-23 * * *"
-    - cron: "*/15 0-2 * * *"
+    # 5分ごと（終日）。議事録のまとめもこの中で行う。朝の通知は設定タブの時刻を過ぎた最初の回で1日1回だけ、
+    # 未対応事項の通知は追加されたものがあるときだけ送る（夜23時〜朝7時は朝まで待つ）
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       test:
@@ -23,7 +23,7 @@ on:
 jobs:
   send:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,6 +33,7 @@ jobs:
       - run: node send.mjs
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
           ADMIN_EMAIL: satoakira.20060214@gmail.com
