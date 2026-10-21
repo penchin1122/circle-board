@@ -97,25 +97,28 @@ const MIN_SCHEMA = {
   type: "OBJECT",
   properties: {
     title: { type: "STRING", description: "会議の短いタイトル（20文字以内）" },
-    points: { type: "ARRAY", items: { type: "STRING" }, description: "話し合った内容の要点" },
-    decisions: { type: "ARRAY", items: { type: "STRING" }, description: "会議で決まったこと" },
+    topics: { type: "ARRAY", items: { type: "OBJECT", properties: {
+      title: { type: "STRING", description: "議題の見出し（15文字以内）" },
+      body: { type: "STRING", description: "その議題で話し合った内容・出た意見・結論に至った理由（2〜5文）" } }, required: ["title", "body"] } },
+    decisions: { type: "ARRAY", items: { type: "STRING" }, description: "会議で決まったこと（1行で簡潔に）" },
     todos: { type: "ARRAY", items: { type: "OBJECT", properties: {
       task: { type: "STRING", description: "やることを具体的に（〜する、の形）" },
       owner: { type: "STRING", description: "担当者の名前。会話から分からなければ空文字" },
       due: { type: "STRING", description: "期限 YYYY-MM-DD。分からなければ空文字" } }, required: ["task", "owner", "due"] } },
     pending: { type: "ARRAY", items: { type: "STRING" }, description: "結論が出ず保留・次回に持ち越しになったこと" }
   },
-  required: ["title", "points", "decisions", "todos", "pending"]
+  required: ["title", "topics", "decisions", "todos", "pending"]
 };
 export function buildMinutesPrompt({ date, transcript, members }) {
   return `あなたは大学の就活サークル「明治就活サークル」の運営ミーティングの書記です。
 以下はミーティング（${date}）の音声を自動で文字起こししたものです。誤変換や「えーと」「あの」などの言いよどみ、話者の区別がないことがあります。
 
 これを読んで、運営メンバーが後から見返す議事録をJSONでまとめてください。
-- points：話し合った内容の要点。1項目1〜2文、重要な順に3〜8個
-- decisions：はっきり決まったことだけ。決まっていないことは入れない
-- todos：誰かがやることになった作業。担当者は次の運営メンバーの名前に合わせる（${members.join("、") || "名前一覧なし"}）。会話から担当が分からなければ owner は空文字。「来週の木曜まで」などの相対的な期限は ${date} を基準に YYYY-MM-DD に直す。期限が出てこなければ空文字
-- pending：結論が出ず、保留や次回に持ち越しになったこと
+一覧画面では decisions・todos・pending だけを表示し、topics は「詳細」を開いたときに表示します。
+- decisions：はっきり決まったことだけ。1項目1行で簡潔に、数字・日付・場所を入れる（例：「体験会は11/5（水）に駿河台で実施」「チラシは100部」）。決まっていないことは入れない
+- todos：誰かがやることになった作業。task は「チラシを印刷する」のように動詞で終わる短い1行。担当者は次の運営メンバーの名前に合わせる（${members.join("、") || "名前一覧なし"}）。会話から担当が分からなければ owner は空文字。「来週の木曜まで」などの相対的な期限は ${date} を基準に YYYY-MM-DD に直す。期限が出てこなければ空文字
+- pending：結論が出ず、保留や次回に持ち越しになったこと。短い1行（例：「インスタの投稿頻度」）
+- topics：議題ごとの詳しい記録。話した順に並べ、各議題で出た意見・検討した案・結論に至った理由を2〜5文で書く。雑談は入れない
 - title：内容が分かる短いタイトル（例：「11月の体験会の準備」）
 - 文字起こしに書かれていないことは推測で足さない。数字・日付・固有名詞は文字起こしのまま
 - 誤変換と思われる語は、文脈から明らかな場合だけ正しい語に直す
@@ -129,7 +132,7 @@ export function normalizeSummary(r) {
   const due = d => (/^\d{4}-\d{2}-\d{2}$/.test(String(d || "").trim()) ? String(d).trim() : "");
   return {
     title: String(r.title || "").trim().slice(0, 40),
-    summary: { points: arr(r.points), decisions: arr(r.decisions), pending: arr(r.pending) },
+    summary: { topics: (Array.isArray(r.topics) ? r.topics : []).filter(t => t && String(t.body || "").trim()).slice(0, 15).map(t => ({ title: String(t.title || "").trim().slice(0, 30), body: String(t.body).trim() })), decisions: arr(r.decisions), pending: arr(r.pending) },
     todos: (Array.isArray(r.todos) ? r.todos : []).filter(t => t && String(t.task || "").trim()).slice(0, 30)
       .map(t => ({ task: String(t.task).trim(), owner: String(t.owner || "").trim(), due: due(t.due) }))
   };

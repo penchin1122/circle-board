@@ -169,7 +169,26 @@ function listen(key, ref, fn) {
   dataUnsubs.push(onSnapshot(ref, snap => { fn(snap); S.ready[key] = true; render(); }, e => { console.warn(key, e); S.ready[key] = true; render(); }));
 }
 const docsOf = snap => snap.docs.map(d => ({ id: d.id, ...d.data() }));
+/* 最終利用日時：アプリを開いたとき（10分に1回まで）に自分の名簿に記録する */
+function touchSeen() {
+  if (!S.user || !isActive() || !S.member) return;
+  const last = Number(memGet("seenAt") || 0); if (Date.now() - last < 10 * 60 * 1000) return;
+  memSet("seenAt", Date.now());
+  updateDoc(doc(db, "members", uid()), { lastSeen: serverTimestamp() }).catch(e => console.warn("lastSeen", e));
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") touchSeen(); });
+function seenLabel(t) {
+  const ms = t && t.toMillis ? t.toMillis() : 0; if (!ms) return "記録なし";
+  const diff = Date.now() - ms, d = new Date(ms), hm = pad(d.getHours()) + ":" + pad(d.getMinutes());
+  if (diff < 15 * 60e3) return "たった今";
+  if (diff < 60 * 60e3) return Math.floor(diff / 60e3) + "分前";
+  const day = ymd(d);
+  if (day === TODAY) return "今日 " + hm;
+  const y = new Date(); y.setDate(y.getDate() - 1); if (day === ymd(y)) return "昨日 " + hm;
+  return md(day) + " " + hm + (diff > 14 * 864e5 ? "（" + Math.floor(diff / 864e5) + "日前）" : "");
+}
 function startData() {
+  setTimeout(touchSeen, 1500);
   if (notifyOn()) setTimeout(bindForeground, 0);
   listen("members", collection(db, "members"), s => S.members = docsOf(s));
   listen("config", doc(db, "config", "main"), s => S.config = s.exists() ? s.data() : null);
@@ -449,8 +468,8 @@ function vHome() {
   return `<div class="bar"><h2>${md(TODAY)}</h2><span class="muted">${esc(memName(uid()))}さん</span></div>
   <div class="grid2">
     <div class="stack">
-      <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : mine.length ? "すべて完了" : ""}</span></h3>
-        ${mine.length ? mine.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">今日の業務はありません。</p>`}
+      <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : ""}</span></h3>
+        ${myOpen ? mine.filter(t => !t.done).map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">${mine.length ? "今日の業務はすべて完了しました。" : "今日の業務はありません。"}</p>`}
         ${myKpiNoReport.length ? `<div class="banner" style="margin:12px 0 0">${untilMtg === 0 ? "今日" : untilMtg === 1 ? "明日" : untilMtg + "日後"}の${mtgName(NEXTMTG) === "月末" ? "月末締め" : "MTG"}（${md(NEXTMTG)}）までにKPIの報告をお願いします：${myKpiNoReport.map(k => esc(k.name)).join("、")} <button class="link" type="button" data-act="go" data-tab="kpi">入力する</button></div>` : ""}
       </section>
       <section class="panel"><h3>未対応（全体共有）<span class="hint">${openIssues.length + overdue.length}件</span>${canWrite() ? `<button class="btn small" type="button" data-act="issue-new">＋ 追加</button>` : ""}</h3>
@@ -623,16 +642,24 @@ function vMinutes() {
   const list = [...(S.minutes || [])].sort((a, b) => (b.date || "").localeCompare(a.date || "") || minTime(b) - minTime(a));
   if (S.minId) { const m = list.find(x => x.id === S.minId); if (m) return vMinuteDetail(m); S.minId = null; }
   const head = `<div class="bar"><h2 class="vh">議事録</h2>${canWrite() ? `<button class="btn" type="button" data-act="min-new">議事録を追加</button>` : ""}</div>
-    <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">MTGの音声を文字起こししたものを貼り付けると、5〜15分ほどで「要点・決定事項・やること」に自動でまとまります。</p>`;
+    <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">MTGの音声を文字起こししたものを貼り付けると、5〜15分ほどで「決定・やること・持ち越し」に自動でまとまります。「詳細を見る」で、議題ごとの詳しい内容も見られます。</p>`;
   if (!list.length) return head + `<div class="empty"><p>まだ議事録がありません。</p>${canWrite() ? `<button class="btn small" type="button" data-act="min-new">最初の議事録を追加</button>` : ""}</div>`;
-  return head + `<div class="min-list">${list.map(m => {
-    const n = (m.todos || []).length, dc = ((m.summary || {}).decisions || []).length;
-    return `<button type="button" class="panel min-item" data-act="min-open" data-id="${esc(m.id)}">
-      <span class="min-date">${m.date ? md(m.date) : ""}</span>
-      <span class="min-body"><b>${esc(minTitle(m))}</b>${minStatusPill(m)}
-        <span class="muted">${m.status === "done" ? `決定事項${dc}件・やること${n}件` : minBusy(m) ? "自動でまとめています" : m.status === "error" ? "開いて、もう一度まとめてください" : ""}・追加：${esc(memName(m.createdBy))}</span></span>
-      <span class="min-go" aria-hidden="true">›</span></button>`; }).join("")}</div>`;
+  return head + `<div class="min-list">${list.map(m => `<article class="panel min-card">
+      <div class="min-card-h"><b>${m.date ? md(m.date) : ""} ${esc(minTitle(m))}</b>${minStatusPill(m)}</div>
+      ${m.status === "done" ? minBrief(m) : `<p class="muted" style="margin:0;font-size:.85rem">${minBusy(m) && !minStuck(m) ? "自動でまとめています。5〜15分ほどで、ここに決定事項とやることが出ます。" : "うまくまとめられませんでした。詳細から、もう一度まとめてください。"}</p>`}
+      <div class="min-card-f"><span class="muted">追加：${esc(memName(m.createdBy))}</span><button class="btn sec small" type="button" data-act="min-open" data-id="${esc(m.id)}">詳細を見る ›</button></div>
+    </article>`).join("")}</div>`;
 }
+/* 一覧に出す簡潔な形：【決定】【やること】【持ち越し】 */
+const shortDate = d => d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}` : "";
+const todoLine = t => t.task + (t.owner || t.due ? `（${[t.owner, shortDate(t.due)].filter(Boolean).join("・")}）` : "");
+const minSections = m => { const sm = m.summary || {}; return [["決定", sm.decisions || []], ["やること", (m.todos || []).map(todoLine)], ["持ち越し", sm.pending || []]].filter(([, a]) => a.length); };
+function minBrief(m) {
+  const secs = minSections(m);
+  if (!secs.length) return `<p class="muted" style="margin:0;font-size:.85rem">決定事項・やることはありませんでした。</p>`;
+  return `<div class="min-brief">${secs.map(([t, a]) => `<div><span class="mb-h">【${t}】</span>${a.map(x => `<span class="mb-l">・${esc(x)}</span>`).join("")}</div>`).join("")}</div>`;
+}
+const minPlain = m => `${m.date ? md(m.date) : ""} ${minTitle(m)}\n\n` + minSections(m).map(([t, a]) => `【${t}】\n` + a.map(x => "・" + x).join("\n")).join("\n\n");
 const minList = (title, items, empty) => `<section class="panel min-sec"><h3>${title}</h3>${items && items.length ? `<ul>${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="muted" style="margin:0">${empty}</p>`}</section>`;
 function vMinuteDetail(m) {
   const sm = m.summary || {}; const todos = m.todos || []; const ed = canEditMin(m);
@@ -643,11 +670,12 @@ function vMinuteDetail(m) {
   else if (minBusy(m) || m.status === "error") body = `<section class="panel min-wait err"><div><b>${minBusy(m) ? "まとめる処理が止まっているようです" : "まとめられませんでした"}</b>
       ${m.error ? `<p class="muted" style="margin:4px 0 0">理由：${esc(m.error)}</p>` : ""}
       ${ed ? `<p style="margin:10px 0 0"><button class="btn small" type="button" data-act="min-retry" data-id="${esc(m.id)}">もう一度まとめる</button></p>` : `<p class="muted" style="margin:6px 0 0">追加した人か管理者が、もう一度まとめ直せます。</p>`}</div></section>`;
-  else body = `${minList("要点", sm.points, "なし")}${minList("決定事項", sm.decisions, "決まったことはありませんでした")}
+  else body = `${(sm.topics || []).length ? `<section class="panel min-sec"><h3>話し合いの詳細</h3><div class="min-topics">${sm.topics.map(t => `<div class="min-topic">${t.title ? `<h4>${esc(t.title)}</h4>` : ""}<p>${esc(t.body)}</p></div>`).join("")}</div></section>` : (sm.points || []).length ? minList("要点", sm.points, "") : ""}
+    ${minList("決定事項", sm.decisions, "決まったことはありませんでした")}
     <section class="panel min-sec"><h3>やること</h3>${todos.length ? `<div class="min-todos">${todos.map((t, i) => `<div class="min-todo">
         <div><b>${esc(t.task)}</b><span class="muted">${t.owner ? "担当：" + esc(t.owner) : "担当：未定"}${t.due ? "・期限：" + md(t.due) : ""}</span></div>
         ${t.issueId ? `<span class="pill good">未対応事項に追加済み</span>` : canWrite() ? `<button class="btn sec small" type="button" data-act="min-todo" data-id="${esc(m.id)}" data-i="${i}">未対応事項に追加</button>` : ""}</div>`).join("")}</div>` : `<p class="muted" style="margin:0">やることはありませんでした</p>`}</section>
-    ${minList("保留・次回に持ち越し", sm.pending, "なし")}`;
+    ${minList("持ち越し", sm.pending, "なし")}`;
   return `<div class="bar">${back}<span class="sp"></span>${tools}</div>
     <div class="min-head"><span class="muted">${m.date ? md(m.date) : ""}・追加：${esc(memName(m.createdBy))}</span><h2>${esc(minTitle(m))}</h2></div>
     <div class="stack">${body}
@@ -687,9 +715,10 @@ function minuteEditDialog(m) {
   const ta = (name, label, arr, help) => fld(label, `<textarea name="${name}" id="f-${name}" rows="4">${esc((arr || []).join("\n"))}</textarea>`, { full: true, help });
   const body = fld("タイトル", `<input name="title" id="f-title" value="${esc(m.title || "")}">`, { full: true }) +
     fld("MTGの日付", `<input type="date" name="date" id="f-date" value="${esc(m.date || "")}">`, { full: true }) +
-    ta("points", "要点", sm.points, "1行に1つ") + ta("decisions", "決定事項", sm.decisions, "1行に1つ") +
+    ta("decisions", "決定事項", sm.decisions, "1行に1つ") +
     fld("やること", `<textarea name="todos" id="f-todos" rows="5">${esc(todos.map(t => [t.task, t.owner || "", t.due ? md(t.due).replace(/\(.\)/, "") : ""].join(" / ").replace(/( \/ )+$/, "")).join("\n"))}</textarea>`, { full: true, help: "1行に1つ。「内容 / 担当 / 期限」の形（例：チラシを印刷する / 佐藤 / 10/30）" }) +
-    ta("pending", "保留・次回に持ち越し", sm.pending, "1行に1つ");
+    ta("pending", "持ち越し", sm.pending, "1行に1つ") +
+    fld("話し合いの詳細", `<textarea name="topics" id="f-topics" rows="8">${esc((sm.topics || []).map(t => "■" + t.title + "\n" + t.body).join("\n\n"))}</textarea>`, { full: true, help: "「■見出し」の次の行から本文。議題ごとに空行で区切る" });
   openDlg("要約を直す", body, {
     submit: async f => {
       const nt = [];
@@ -699,7 +728,7 @@ function minuteEditDialog(m) {
         const old = todos.find(t => t.task === task.trim());
         nt.push({ task: task.trim(), owner: owner.trim(), due: d, ...(old && old.issueId ? { issueId: old.issueId } : {}) });
       }
-      await updateDoc(doc(db, "minutes", m.id), { title: f.title.trim(), date: f.date || m.date, summary: { points: lines(f.points), decisions: lines(f.decisions), pending: lines(f.pending) }, todos: nt, editedBy: uid() });
+      await updateDoc(doc(db, "minutes", m.id), { title: f.title.trim(), date: f.date || m.date, summary: { ...(sm.points ? { points: sm.points } : {}), topics: (f.topics || "").split(/\n\s*\n/).map(b => b.trim()).filter(Boolean).map(b => { const [h, ...r] = b.split("\n"); return r.length ? { title: h.replace(/^■\s*/, "").trim(), body: r.join("\n").trim() } : { title: "", body: h.replace(/^■\s*/, "").trim() }; }), decisions: lines(f.decisions), pending: lines(f.pending) }, todos: nt, editedBy: uid() });
       return "要約を保存しました";
     }
   });
@@ -756,11 +785,11 @@ function vMembers() {
   ${invites.length ? `<section class="panel" style="margin-bottom:16px"><h3>追加済み・まだログインしていない人<span class="hint">${invites.length}人</span></h3>
     ${invites.map(iv => `<div class="inv-row"><span class="who" style="--mc:${iv.color || "var(--muted)"}"><i></i><b>${esc(iv.name)}</b></span><span class="muted inv-mail">${esc(iv.id)}</span>${rolePill(roleOf(iv))}${iv.finance ? `<span class="pill info">収支閲覧</span>` : ""}<span class="sp"></span><button class="btn sec small" type="button" data-act="inv-copy" data-id="${esc(iv.id)}">案内文をコピー</button><button class="link" type="button" style="color:var(--bad)" data-act="inv-del" data-id="${esc(iv.id)}">${S.armDel === "inv:" + iv.id ? "本当に取り消す" : "取り消す"}</button></div>`).join("")}
   </section>` : ""}
-  <div class="tablewrap"><table class="members-table"><thead><tr><th>表示名</th><th>色</th><th>Googleアカウント</th><th>状態</th><th>権限</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
+  <div class="tablewrap"><table class="members-table"><thead><tr><th>表示名</th><th>色</th><th>Googleアカウント・最終利用</th><th>状態</th><th>権限</th><th>収支の閲覧</th><th></th></tr></thead><tbody>
   ${list.map(m => { const self = m.id === uid(); return `<tr>
     <td><input class="name-in" id="mn-${esc(m.id)}" value="${esc(m.name || "")}" data-act="mem-name" data-id="${esc(m.id)}" aria-label="表示名"></td>
     <td><div class="swatches" role="group" aria-label="${esc(m.name || "")}の色">${MEMBER_COLORS.map(c => `<button type="button" class="swatch" style="background:${c}" data-act="mem-color" data-id="${esc(m.id)}" data-c="${c}" aria-label="色 ${c}" aria-pressed="${mColor(m.id) === c}"></button>`).join("")}</div></td>
-    <td>${esc(m.email || "")}</td><td>${st(m.status)}</td>
+    <td>${esc(m.email || "")}${m.status === "pending" ? "" : `<div class="seen${m.lastSeen && Date.now() - m.lastSeen.toMillis() > 14 * 864e5 ? " old" : ""}">最終利用：${esc(seenLabel(m.lastSeen))}</div>`}</td><td>${st(m.status)}</td>
     <td>${self ? `<span class="muted">管理者</span>` : `<select class="role-sel" id="mr-${esc(m.id)}" data-act="mem-role" data-id="${esc(m.id)}" aria-label="${esc(m.name || "")}の権限">${ROLES.map(([k, l]) => `<option value="${k}" ${roleOf(m) === k ? "selected" : ""}>${l}</option>`).join("")}</select>`}</td>
     <td>${self ? `<span class="muted">管理者</span>` : `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="mf-${esc(m.id)}" data-act="mem-fin" data-id="${esc(m.id)}" ${m.finance ? "checked" : ""}>見られる</label>`}</td>
     <td>${self ? "" : m.status === "pending" ? `<button class="btn small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">承認する</button> <button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">拒否</button>` : m.status === "active" ? `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="inactive">利用停止</button>` : `<button class="btn sec small" type="button" data-act="mem-status" data-id="${esc(m.id)}" data-v="active">再開する</button> <button class="btn small ${S.armDel === "mem:" + m.id ? "danger" : "sec danger-sec"}" type="button" data-act="mem-del" data-id="${esc(m.id)}">${S.armDel === "mem:" + m.id ? "本当に削除する" : "削除"}</button>`}</td></tr>`; }).join("")}
@@ -1349,8 +1378,7 @@ document.addEventListener("click", async e => {
   if (act === "min-more") { const m = (S.minutes || []).find(x => x.id === id); if (m) minuteMoreDialog(m); return; }
   if (act === "min-retry") { closeDlg(); try { await updateDoc(doc(db, "minutes", id), { status: "pending", error: "", startedAt: "", queuedAt: serverTimestamp() }); toast("もう一度まとめます。5〜15分ほどお待ちください"); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "min-todo") { const m = (S.minutes || []).find(x => x.id === id); if (m) { try { await minuteTodoToIssue(m, Number(a.dataset.i)); } catch (err) { toast(errMsg(err), "error"); } } return; }
-  if (act === "min-copy") { const m = (S.minutes || []).find(x => x.id === id); if (m) { const sm = m.summary || {}; const sec = (t, a) => a && a.length ? `【${t}】\n` + a.map(x => "・" + x).join("\n") + "\n" : "";
-    copyPlain(`${m.date ? md(m.date) : ""} ${minTitle(m)}\n\n` + sec("要点", sm.points) + sec("決定事項", sm.decisions) + sec("やること", (m.todos || []).map(t => t.task + (t.owner ? `（${t.owner}${t.due ? "・" + md(t.due) : ""}）` : t.due ? `（${md(t.due)}）` : ""))) + sec("保留・次回に持ち越し", sm.pending), "要約をコピーしました"); closeDlg(); } return; }
+  if (act === "min-copy") { const m = (S.minutes || []).find(x => x.id === id); if (m) { copyPlain(minPlain(m), "要約をコピーしました"); closeDlg(); } return; }
   if (act === "min-del") {
     if (S.armDel !== id) { S.armDel = id; refreshSheet(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; refreshSheet(); }, 5000); return; }
     S.armDel = null; closeDlg(); try { await deleteDoc(doc(db, "minutes", id)); S.minId = null; toast("議事録を削除しました"); render(); } catch (err) { toast(errMsg(err), "error"); } return;
@@ -1402,7 +1430,7 @@ document.addEventListener("change", async e => {
       await updateDoc(doc(db, "issues", id), { done: a.checked, doneAt: a.checked ? serverTimestamp() : null, doneBy: a.checked ? uid() : null });
     }
     if (act === "task-done") {
-      const row = a.closest(".task"); if (row) { row.classList.toggle("done", a.checked); row.classList.add("just"); }
+      const row = a.closest(".task"); if (row) { row.classList.toggle("done", a.checked); row.classList.add("just"); if (a.checked && S.tab === "home" && !row.closest("dialog")) setTimeout(() => row.classList.add("leaving"), 120); }
       if (a.checked) toast("完了にしました", "success", { action: { label: "元に戻す", run: () => updateDoc(doc(db, "tasks", id), { done: false }).catch(e => toast(errMsg(e), "error")) } });
       await new Promise(r => setTimeout(r, reducedMotion() ? 0 : 380));
       await updateDoc(doc(db, "tasks", id), { done: a.checked });
