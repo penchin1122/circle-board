@@ -892,7 +892,22 @@ form.addEventListener("submit", async e => {
   finally { if (btn) btn.disabled = false; }
 });
 const sel = (name, list, val) => `<select name="${name}" id="f-${name}">${list.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
-const fld = (label, inner, { full, req, help, half } = {}) => `<div class="field${full ? " full" : ""}${half ? " half" : ""}"><span class="lbl">${esc(label)}${req ? `<span class="req">必須</span>` : ""}</span>${inner}${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
+const fld = (label, inner, { full, req, help, half, opt } = {}) => `<div class="field${full ? " full" : ""}${half ? " half" : ""}${opt ? " opt" : ""}"><span class="lbl">${esc(label)}${req ? `<span class="req">必須</span>` : ""}</span>${inner}${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
+/* 入力画面：よく使わない項目は「＋ …を追加」を押したときだけ表示する */
+const asOpt = html => html.replace('class="field', 'class="field opt');
+const moreBtn = label => `<div class="field full more-row"><button type="button" class="link more-btn" data-more>＋ ${esc(label)}</button></div>`;
+function openMore(focus) {
+  const b = form.querySelector(".dlg-b"); if (!b || b.classList.contains("show-more")) return;
+  b.classList.add("show-more");
+  if (focus) { const f = b.querySelector(".opt input:not([type=hidden]):not([type=checkbox]),.opt textarea,.opt select"); if (f) f.focus(); }
+}
+function autoMore() {
+  const b = form.querySelector(".dlg-b"); if (!b) return;
+  const filled = [...b.querySelectorAll(".opt textarea,.opt input[type=date],.opt input[type=text],.opt input:not([type])")].some(x => x.value.trim());
+  const shareAll = b.querySelector('.opt input[name$="_all"]');
+  if (filled || (shareAll && !shareAll.checked)) openMore(false);
+}
+form.addEventListener("click", e => { if (e.target.closest("[data-more]")) openMore(true); });
 const memberOpts = () => activeMembers().map(m => [m.id, m.name || m.email]);
 /* メンバー選択はすべて同じ「色付きチップ」で選ぶ（multi=複数選択、false=1人だけ） */
 function memberChips(name, selected, { multi = true, byName = false, extra = [] } = {}) {
@@ -967,18 +982,19 @@ function taskDialog(t, date) {
           <span class="help">日付をタップして選びます（もう一度タップで解除）。時間・担当・内容は、選んだすべての日に同じものが入ります。</span></div>
       </div>`;
   const body = dateField +
-    `<div class="field full"><span class="lbl">担当者<span class="req">必須</span></span><div class="pick-chips" role="group" aria-label="担当者（複数選べます）">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-owner-${i}" value="${esc(m.id)}" ${ownersOf(v).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div><span class="help">複数選べます。選んだ全員のホームと朝の通知に出ます。</span></div>` +
+    `<div class="field full"><span class="lbl">担当者（複数可）<span class="req">必須</span></span><div class="pick-chips" role="group" aria-label="担当者（複数選べます）">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-owner-${i}" value="${esc(m.id)}" ${ownersOf(v).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div></div>` +
     `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="allday" id="f-allday" value="1" ${t ? (!t.start ? "checked" : "") : (v.start ? "" : "checked")}>時間を決めない（終日・時間未定）</label></div>` +
     fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`, { half: true }) +
-    fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "空欄でもOK", half: true }) +
+    fld("終了（任意）", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { half: true }) +
     fld("担当業務", sel("routine", routineOpts, v.routine === "__other" ? "__other" : v.routine), { full: true }) +
-    fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true }) +
-    shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。");
+    moreBtn("メモ・共有する人を設定（いまは全員に共有）") +
+    fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true, opt: true }) +
+    asOpt(shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。"));
   openDlg(t ? "業務を編集" : "業務を登録", body, {
     submit: async f => {
       const allday = !!f.allday || !f.start;
       const start = allday ? "" : f.start, end = allday ? "" : (f.end || "");
-      if (f.routine === "__other" && !f.detail.trim()) return showErr("「その他」を選んだときは内容を記述してください。"), false;
+      if (f.routine === "__other" && !f.detail.trim()) return openMore(true), showErr("「その他」を選んだときは内容を記述してください。"), false;
       if (end && start && end < start) return showErr("終了時刻が開始時刻より前になっています。"), false;
       const multi = !t && f.dmode === "multi";
       const dates = multi ? (f.dates || "").split(",").filter(Boolean).sort() : [f.date];
@@ -1005,6 +1021,9 @@ function taskDialog(t, date) {
   const syncAd = () => { [st, en].forEach(x => { x.disabled = ad.checked; x.closest(".field").style.opacity = ad.checked ? .45 : 1; }); };
   ad.addEventListener("change", () => { if (!ad.checked && !st.value) st.value = "17:30"; syncAd(); }); syncAd();
   if (!t) { wireMultiDate(v.date); restoreDraft(); syncAd(); syncDateMode(); }
+  // 「その他」を選んだときは内容の記入が必要なので、メモ欄を開く
+  const rt = form.querySelector('[name="routine"]'); const chkOther = () => { if (rt && rt.value === "__other") openMore(false); };
+  if (rt) rt.addEventListener("change", chkOther); chkOther(); autoMore();
 }
 
 /* 複数日の選択：小さなカレンダーで日付をタップして選ぶ */
@@ -1067,9 +1086,10 @@ function issueDialog(it) {
   }
   const v = it || { title: "", detail: "", due: "", owners: [] };
   const body = fld("内容", `<input name="title" id="f-title" required value="${esc(v.title)}" placeholder="例：チラシの在庫が少ないので追加発注">`, { full: true, req: true }) +
-    fld("詳細（任意）", `<textarea name="detail" id="f-detail">${esc(v.detail || "")}</textarea>`, { full: true }) +
-    fld("期限（任意）", `<input type="date" name="due" id="f-due" value="${esc(v.due || "")}">`) +
-    `<div class="field full"><span class="lbl">担当（任意・複数可）</span><div class="pick-chips">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-iowner-${i}" value="${esc(m.id)}" ${(v.owners || []).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div><span class="help">決まっていなければ空欄のままでOK。運営メンバー全員のホームに表示されます。</span></div>`;
+    `<div class="field full"><span class="lbl">担当（任意・複数可）</span><div class="pick-chips">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-iowner-${i}" value="${esc(m.id)}" ${(v.owners || []).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div><span class="help">決まっていなければ空欄でOK。運営メンバー全員のホームに表示されます。</span></div>` +
+    moreBtn("詳細・期限を追加") +
+    fld("詳細（任意）", `<textarea name="detail" id="f-detail">${esc(v.detail || "")}</textarea>`, { full: true, opt: true }) +
+    fld("期限（任意）", `<input type="date" name="due" id="f-due" value="${esc(v.due || "")}">`, { full: true, opt: true });
   openDlg(it ? "未対応事項を編集" : "未対応事項を追加", body, {
     submit: async f => {
       const data = { title: f.title.trim(), detail: f.detail.trim(), due: f.due || "", owners: f.__fd.getAll("owners") };
@@ -1080,6 +1100,7 @@ function issueDialog(it) {
     del: it ? () => deleteDoc(doc(db, "issues", it.id)) : null,
     draft: it ? null : "issue"
   });
+  autoMore();
   if (!it) restoreDraft();
 }
 function ledDialog(r) {

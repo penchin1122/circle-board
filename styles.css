@@ -630,3 +630,10 @@ dialog{overflow-x:hidden}
   html.kb-open dialog{padding-bottom:0}
   html.kb-open dialog .dlg-f{padding-bottom:10px}
 }
+
+/* ===== 入力画面：任意の項目は「＋ …を追加」で開く ===== */
+.dlg-b:not(.show-more) .opt{display:none}
+.dlg-b.show-more .more-row{display:none}
+.dlg-b.show-more .opt{animation:soft-in .25s var(--ease-out)}
+.more-btn{font-weight:700;font-size:.88rem;justify-self:start;padding:4px 0}
+.more-row .more-btn{align-self:flex-start;text-decoration:none}
