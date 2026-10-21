@@ -820,6 +820,24 @@ function sheetContent(sh) {
   return null;
 }
 
+/* ===== キーボードが出たとき：シートをキーボードの上に収め、入力中の欄を見える位置へ ===== */
+(() => {
+  const vv = window.visualViewport; if (!vv) return;
+  const sync = () => {
+    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    const open = kb > 120;
+    document.documentElement.classList.toggle("kb-open", open);
+    if (open && dlg.open) { dlg.style.marginBottom = kb + "px"; dlg.style.maxHeight = (vv.height - 8) + "px"; }
+    else { dlg.style.marginBottom = ""; dlg.style.maxHeight = ""; }
+  };
+  vv.addEventListener("resize", sync); vv.addEventListener("scroll", sync);
+  form.addEventListener("focusin", e => {
+    const el = e.target.closest("input:not([type=checkbox]):not([type=radio]),select,textarea"); if (!el) return;
+    setTimeout(() => { sync(); el.scrollIntoView({ block: "center", behavior: "smooth" }); }, 300);
+  });
+  dlg.addEventListener("close", () => { dlg.style.marginBottom = ""; dlg.style.maxHeight = ""; });
+})();
+
 /* ===== スワイプで閉じる（スマホのボトムシート） ===== */
 (() => {
   const mobile = () => window.matchMedia && matchMedia("(max-width:600px)").matches;
@@ -874,7 +892,7 @@ form.addEventListener("submit", async e => {
   finally { if (btn) btn.disabled = false; }
 });
 const sel = (name, list, val) => `<select name="${name}" id="f-${name}">${list.map(o => { const [v, l] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}" ${String(val) === String(v) ? "selected" : ""}>${esc(l)}</option>`; }).join("")}</select>`;
-const fld = (label, inner, { full, req, help } = {}) => `<div class="field${full ? " full" : ""}"><span class="lbl">${esc(label)}${req ? `<span class="req">必須</span>` : ""}</span>${inner}${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
+const fld = (label, inner, { full, req, help, half } = {}) => `<div class="field${full ? " full" : ""}${half ? " half" : ""}"><span class="lbl">${esc(label)}${req ? `<span class="req">必須</span>` : ""}</span>${inner}${help ? `<span class="help">${esc(help)}</span>` : ""}</div>`;
 const memberOpts = () => activeMembers().map(m => [m.id, m.name || m.email]);
 /* メンバー選択はすべて同じ「色付きチップ」で選ぶ（multi=複数選択、false=1人だけ） */
 function memberChips(name, selected, { multi = true, byName = false, extra = [] } = {}) {
@@ -951,8 +969,8 @@ function taskDialog(t, date) {
   const body = dateField +
     `<div class="field full"><span class="lbl">担当者<span class="req">必須</span></span><div class="pick-chips" role="group" aria-label="担当者（複数選べます）">${activeMembers().map((m, i) => `<label class="pchip" style="--mc:${mColor(m.id)}"><input type="checkbox" name="owners" id="f-owner-${i}" value="${esc(m.id)}" ${ownersOf(v).includes(m.id) ? "checked" : ""}><span><i></i>${esc(m.name || m.email)}</span></label>`).join("")}</div><span class="help">複数選べます。選んだ全員のホームと朝の通知に出ます。</span></div>` +
     `<div class="field full"><label class="checks" style="font-size:.88rem"><input type="checkbox" name="allday" id="f-allday" value="1" ${t ? (!t.start ? "checked" : "") : (v.start ? "" : "checked")}>時間を決めない（終日・時間未定）</label></div>` +
-    fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`) +
-    fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "決まっていなければ空欄でOK" }) +
+    fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`, { half: true }) +
+    fld("終了", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { help: "空欄でもOK", half: true }) +
     fld("担当業務", sel("routine", routineOpts, v.routine === "__other" ? "__other" : v.routine), { full: true }) +
     fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true }) +
     shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。");

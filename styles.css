@@ -614,3 +614,19 @@ html,body{touch-action:pan-x pan-y}
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 /* iPhoneは16px未満の入力欄を押すと自動で拡大するので、入力欄は16px以上にする */
 @media (max-width:860px){input,select,textarea{font-size:16px!important}}
+
+/* ===== 入力画面（スマホ）：日付・時刻欄がはみ出して横にずれるのを防ぐ ===== */
+dialog{overflow-x:hidden}
+.field input[type=date],.field input[type=time],.field input[type=month]{-webkit-appearance:none;appearance:none;display:block;min-height:42px;text-align:left;line-height:1.4}
+.field input::-webkit-date-and-time-value{text-align:left;margin:0}
+.field input::-webkit-datetime-edit{padding:0}
+@media (max-width:600px){
+  .dlg-b{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;padding:16px}
+  .dlg-b > *:not(.half){grid-column:1/-1}
+  .dlg-f{padding:12px 16px 14px}
+  .dlg-f .sp{flex:1}
+  .dlg-f .sp .btn{flex:1;justify-content:center;text-align:center;min-height:46px}
+  /* キーボードが出ている間は、画面下の余白（ホームバー分）をなくす */
+  html.kb-open dialog{padding-bottom:0}
+  html.kb-open dialog .dlg-f{padding-bottom:10px}
+}
