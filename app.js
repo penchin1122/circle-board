@@ -102,7 +102,7 @@ const S = {
   user: null, member: null, isAdmin: false, dataKey: "",
   members: [], config: null, tasks: [], kpis: [], ledger: [],
   ready: {}, need: [],
-  tab: "home", adminSub: "members", forms: [], kpiMonth: THISMONTH, calMonth: THISMONTH, selDay: TODAY, moneyMonth: THISMONTH,
+  tab: "home", adminSub: "settings", forms: [], kpiMonth: THISMONTH, calMonth: THISMONTH, selDay: TODAY, moneyMonth: THISMONTH,
   onlyMine: ls.get("cb_onlymine", "0") === "1"
 };
 let memberUnsub = null, dataUnsubs = [];
@@ -582,9 +582,9 @@ async function copyText(t) {
   catch (e) { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); toast("案内文をコピーしました"); } catch (_) { toast("コピーできませんでした", "error"); } ta.remove(); }
 }
 function vAdmin() {
-  const sub = S.adminSub === "settings" ? "settings" : "members";
+  const sub = S.adminSub === "members" ? "members" : "settings";
   const pending = S.members.filter(m => m.status === "pending").length;
-  const sw = `<div class="seg seg-lg" role="tablist" aria-label="管理"><label><input type="radio" name="adminsub" id="adm-members" value="members" data-act="adm-sub" ${sub === "members" ? "checked" : ""}><span>メンバー${pending ? `<span class="badge">${pending}</span>` : ""}</span></label><label><input type="radio" name="adminsub" id="adm-settings" value="settings" data-act="adm-sub" ${sub === "settings" ? "checked" : ""}><span>設定</span></label></div>`;
+  const sw = `<div class="seg seg-lg" role="tablist" aria-label="管理"><label><input type="radio" name="adminsub" id="adm-settings" value="settings" data-act="adm-sub" ${sub === "settings" ? "checked" : ""}><span>設定</span></label><label><input type="radio" name="adminsub" id="adm-members" value="members" data-act="adm-sub" ${sub === "members" ? "checked" : ""}><span>メンバー${pending ? `<span class="badge">${pending}</span>` : ""}</span></label></div>`;
   return `<div class="adm-head">${sw}</div>` + (sub === "settings" ? vSettings() : vMembers());
 }
 /* ===== フォーム：外部に送るGoogleフォームのリンク集 ===== */
