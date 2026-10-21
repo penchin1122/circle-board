@@ -31,6 +31,11 @@ const NEXTMTG = [...meetingsOfMonth(THISMONTH), ...meetingsOfMonth(shiftMonth(TH
 const mtgLabel = d => { const mt = meetingsOfMonth(d.slice(0, 7)); return mt[0] === d ? "第2木" : mt[1] === d ? "第4木" : "月末"; };
 const mtgName = d => mtgLabel(d) === "月末" ? "月末" : "MTG";
 const ls = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } } };
+/* 表示サイズ（アプリ全体の拡大・縮小）。端末ごとに保存 */
+const ZOOMS = [[0.9, "小"], [1, "標準"], [1.15, "大"], [1.3, "特大"]];
+const uiZoom = () => { const v = Number(ls.get("uiZoom", "1")); return ZOOMS.some(([z]) => z === v) ? v : 1; };
+function applyZoom() { const z = uiZoom(); document.documentElement.style.zoom = z === 1 ? "" : String(z); document.documentElement.dataset.zoom = String(z); }
+applyZoom();
 /* トースト：type = "success" | "error" | "info" | "warn"。同時に出すのは1つだけ（新しいものが前のものと入れ替わる） */
 const TOAST_ICON = {
   success: '<path d="M20 6 9 17l-5-5"/>',
@@ -231,10 +236,11 @@ const deltaTag = (t, unit) => t.delta === null ? "" : `<span class="delta ${t.de
 const sinceLabel = t => t.before ? `${t.before.d.slice(0, 7) !== t.last.d.slice(0, 7) ? "先月" : ""}${mtgLabel(t.before.d)}（${md(t.before.d)}）から` : "";
 const viewersLabel = k => (!k.viewers || k.viewers.includes("all")) ? "全員に公開" : "公開：" + k.viewers.map(memName).join("・");
 function kpiRow(k, withEdit) {
+  const tap = withEdit ? "" : ` data-act="kpi-detail" data-id="${esc(k.id)}" role="button" tabindex="0" aria-label="${esc(k.name)}の詳細"`;
   const tools = withEdit && canManage() ? ` <button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button> <button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button>` : "";
   if (isTrack(k)) {
     const t = trackInfo(k);
-    return `<div class="kpi track">
+    return `<div class="kpi track${withEdit ? "" : " tap"}"${tap}>
     <div class="name">${esc(k.name)} <span class="pill plain">記録のみ</span>${tools}</div>
     <div class="nums">${t.last ? `<b>${cu(t.last.v, "num")}</b>` : `<b class="muted">—</b>`}${Number(k.target) > 0 ? ` / ${num(k.target)}` : ""}${esc(k.unit || "")} ${t.last ? deltaTag(t, k.unit) : `<span class="muted" style="font-size:.8rem">未記録</span>`}</div>
     <div class="meta"><span>担当：${whoTag(k.owner)}</span>${t.last ? `<span>${mtgLabel(t.last.d)}（${md(t.last.d)}）時点</span>` : ""}${t.delta !== null ? `<span>${esc(sinceLabel(t))}の増減</span>` : ""}${canManage() ? `<span>${esc(viewersLabel(k))}</span>` : ""}</div>
@@ -243,7 +249,7 @@ function kpiRow(k, withEdit) {
   const s = kpiStatus(k); const w = Math.min(100, s.rate * 100);
   const cls = s.st.c === "good" ? "good" : (s.st.c === "warn" || s.st.c === "bad") ? "warn" : "";
   const pace = k.month === THISMONTH ? `<span class="pace" style="left:${(s.el * 100).toFixed(1)}%" title="今日時点の目安ペース"></span>` : "";
-  return `<div class="kpi">
+  return `<div class="kpi${withEdit ? "" : " tap"}"${tap}>
     <div class="name">${esc(k.name)} <span class="pill ${s.st.c}">${s.st.t}</span>${tools}</div>
     <div class="nums">${s.t > 0 ? `<b>${cu(s.a.v, "num")}</b> / ${num(s.t)}${esc(k.unit || "")} <span class="muted">（${Math.round(s.rate * 100)}%）</span>` : `<b>${num(s.a.v)}</b>${esc(k.unit || "")} <span class="muted">／ 目標未設定</span>`}</div>
     <div class="meter"><i class="${cls}" style="width:${w}%"></i>${pace}</div>
@@ -309,10 +315,11 @@ document.addEventListener("click", e => {
   if (e.target.closest("#drawer-bg") || e.target.closest('[data-menu="close"]')) setMenu(false);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#drawer").classList.contains("open")) setMenu(false); });
+document.addEventListener("keydown", e => { const t = e.target; if ((e.key === "Enter" || e.key === " ") && t.matches && t.matches('[role="button"][data-act]')) { e.preventDefault(); t.click(); } });
 if (DESK.addEventListener) DESK.addEventListener("change", () => setMenu(false));
 /* 左メニューの見出しの下線を、上部ヘッダーの下線と同じ高さにそろえる */
 (() => { const mast = document.querySelector(".mast"); if (!mast) return;
-  const sync = () => document.documentElement.style.setProperty("--mast-h", mast.getBoundingClientRect().height + "px");
+  const sync = () => document.documentElement.style.setProperty("--mast-h", mast.offsetHeight + "px");
   sync(); if (window.ResizeObserver) new ResizeObserver(sync).observe(mast); else addEventListener("resize", sync); })();
 function countUp(el) {
   const to = Number(el.dataset.v); const fmt = el.dataset.f; if (!isFinite(to)) return;
@@ -343,7 +350,7 @@ function renderChrome() {
   tabs.innerHTML = vis.map(([k, l]) => `<button type="button" data-tab="${k}" ${k === S.tab ? 'aria-current="page"' : ""}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TAB_ICON[k] || ""}</svg><span>${l}</span>${k === "admin" && pending ? `<span class="badge">${pending}</span>` : ""}</button>`).join("");
   mb.classList.toggle("has-badge", pending > 0);
   const meName = memName(uid()) !== "（不明）" ? memName(uid()) : (S.user.displayName || "");
-  foot.innerHTML = `<div class="df-me"><b>${esc(meName)}</b><span class="muted">${esc(roleLabel(myRole()))}・${esc(S.user.email || "")}</span></div><button class="btn sec small" type="button" data-act="logout">ログアウト</button>`;
+  foot.innerHTML = `<div class="df-me"><b>${esc(meName)}</b><span class="muted">${esc(roleLabel(myRole()))}・${esc(S.user.email || "")}</span></div><div class="df-btns"><button class="btn sec small" type="button" data-act="zoom">表示サイズ</button><button class="btn sec small" type="button" data-act="logout">ログアウト</button></div>`;
   const cur = TABS_ALL.find(([k]) => k === S.tab);
   const pageName = cur ? cur[1].replace(/（.*）/, "") : "運営ボード";
   $("#page-title").textContent = pageName; document.title = pageName + "｜運営ボード";
@@ -373,6 +380,7 @@ function render() {
   const anim = S.anim || (main.querySelector(".sk-wrap") ? "in" : null); S.anim = null;
   main.innerHTML = views[S.tab]();
   if (anim && !reducedMotion()) runEnter(main, anim);
+  refreshSheet();
   if (S.pulse) { const el = main.querySelector(S.pulse); S.pulse = null; if (el && !reducedMotion()) { el.classList.remove("pulse-in"); void el.offsetWidth; el.classList.add("pulse-in"); } }
   if (S.isAdmin) { setTimeout(() => { seedMonth(THISMONTH); if (S.tab === "kpi") seedMonth(S.kpiMonth); }, 0); }
   window.scrollTo(0, prevScroll);
@@ -413,7 +421,7 @@ function skeleton(tab) {
   else body = `<div class="grid2"><div class="stack">${skPanel(2, "35%")}${skPanel(1, "45%")}</div><div class="stack"><section class="panel">${sk("35%", 16)}<div style="margin-top:14px">${skKpi(3)}</div></section></div></div>`;
   return `<div class="sk-wrap" role="status" aria-label="読み込み中">${head}${body}<span class="visually-hidden">読み込み中です</span></div>`;
 }
-function monthNav(key) { return `<div class="monthnav"><button type="button" data-act="mprev" data-k="${key}" aria-label="前の月">‹</button><span>${monthLabel(S[key])}</span><button type="button" data-act="mnext" data-k="${key}" aria-label="次の月">›</button></div>`; }
+function monthNav(key) { return `<div class="monthnav"><button type="button" data-act="mprev" data-k="${key}" aria-label="前の月">‹</button><button type="button" class="mlabel" data-act="mpick" data-k="${key}" aria-label="月を選ぶ（${monthLabel(S[key])}）">${monthLabel(S[key])}</button><button type="button" data-act="mnext" data-k="${key}" aria-label="次の月">›</button></div>`; }
 
 function vHome() {
   const mine = S.tasks.filter(t => t.date === TODAY && (isMine(t) || sharedAll(t) || (t.shareWith || []).includes(uid()))).sort(sortTasks);
@@ -659,10 +667,11 @@ function vSettings() {
   const list = (key, items, label) => `<section class="panel"><h3>${label}</h3><div class="listedit" data-list="${key}">${items.map((x, i) => rowHTML(key, i, x, label)).join("")}</div><button class="link" type="button" data-add="${key}" style="margin-top:8px">＋ 追加</button></section>`;
   return `<div class="bar"><h2>設定</h2><span class="pill warn" id="save-hint" ${S.settingsDirty ? "" : "hidden"}>未保存の変更があります</span><button class="btn" type="button" data-act="save-settings">保存</button></div>
     <p class="muted" style="font-size:.82rem;margin:-8px 0 14px">左の点のつまみをドラッグすると並び順を変えられます（キーボードではつまみを選んで↑↓キー）。この順番で業務登録や収支の選択肢に表示されます。</p>
-    <section class="panel" style="margin-bottom:16px"><h3>朝の通知</h3>
+    <section class="panel" style="margin-bottom:16px"><h3>通知</h3>
       <div class="dlg-b" style="padding:0">
         <div class="field"><label class="checks" style="font-size:.9rem"><input type="checkbox" id="s-notifyEnabled" ${c.notifyEnabled === false ? "" : "checked"}>担当業務がある日の朝に通知を送る</label></div>
         <div class="field"><span class="lbl">送る時間</span>${notifyTimeSelect(c.notifyTime || "07:30")}<span class="help">実際に届くのは、この時刻から15分ほど遅れることがあります</span></div>
+        <div class="field full"><label class="checks" style="font-size:.9rem"><input type="checkbox" id="s-issueNotify" ${c.issueNotify === false ? "" : "checked"}>未対応事項が追加されたら、追加した人以外の全員に通知を送る</label><span class="help">追加から5〜15分ほどで届きます。夜23時〜朝7時に追加されたものは、朝7時以降にまとめて送ります</span></div>
         <div class="field full"><span class="lbl">ウェブプッシュ証明書の鍵（初回のみ）</span><input id="s-vapid" value="${esc(c.vapidKey || "")}" placeholder="Firebase →プロジェクトの設定 → Cloud Messaging →ウェブプッシュ証明書の「鍵ペア」"><span class="help">${c.vapidKey ? "設定済みです" : "未設定です。設定するまでメンバーは通知を受け取る登録ができません"}</span></div>
       </div></section>
     <div class="grid2">${list("routines", c.routines, "定例業務（業務登録の選択肢）")}${list("expenseCats", c.expenseCats, "支出カテゴリ")}${list("incomeCats", c.incomeCats, "収入カテゴリ")}${list("methods", c.methods, "支払方法")}</div>`;
@@ -702,9 +711,9 @@ function notifyDialog() {
   const perm = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
   const iosNote = isIOS() && !isStandalone() ? `<p class="banner" style="grid-column:1/-1;margin:0">iPhoneで通知を受け取るには、Safariの共有ボタン →「ホーム画面に追加」で追加したアプリから開いて、ここで登録してください。</p>` : "";
   const body = iosNote + `<div class="field full"><span class="lbl">この端末の状態</span><div class="ro">${on ? `<span class="pill good">通知を受け取ります</span>` : perm === "denied" ? `<span class="pill bad">通知がブロックされています</span>` : `<span class="pill plain">受け取っていません</span>`}</div>
-    <span class="help">${c.notifyEnabled === false ? "現在、管理者が朝の通知を止めています。" : `自分が担当の業務がある日の朝${esc(c.notifyTime || "07:30")}ごろに届きます。`}端末ごとに登録が必要です（スマホとPCの両方で受け取るなら両方で登録）。</span>
+    <span class="help">${c.notifyEnabled === false ? "現在、管理者が朝の通知を止めています。" : `自分が担当の業務がある日の朝${esc(c.notifyTime || "07:30")}ごろに届きます。`}${c.issueNotify === false ? "" : "未対応事項が追加されたときにも届きます。"}端末ごとに登録が必要です（スマホとPCの両方で受け取るなら両方で登録）。</span>
     ${perm === "denied" ? `<span class="help">端末の設定（iPhoneは「設定」→「通知」→「運営ボード」）で許可してから、もう一度押してください。</span>` : ""}</div>`;
-  form.innerHTML = `<div class="dlg-h"><h3>朝の通知</h3><button type="button" data-close aria-label="閉じる">×</button></div><div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
+  form.innerHTML = `<div class="dlg-h"><h3>通知</h3><button type="button" data-close aria-label="閉じる">×</button></div><div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
     <div class="dlg-f"><div class="sp">${on ? `<button class="btn sec" type="button" id="n-off">この端末で受け取らない</button>` : `<button class="btn" type="button" id="n-on">この端末で受け取る</button>`}</div></div>`;
   onSubmit = null; onDelete = null; draftKey = null;
   showDlg();
@@ -743,6 +752,7 @@ function applyFormState(st) {
 }
 let draftKey = null;
 function openDlg(title, body, { submit, del, readOnly, draft } = {}) {
+  S.sheet = null; form.classList.remove("is-sheet");
   form.innerHTML = `<div class="dlg-h"><h3>${esc(title)}</h3><button type="button" data-close aria-label="閉じる">×</button></div>
     <div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
     <div class="dlg-f">${del ? `<button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button>` : ""}<div class="sp">${readOnly ? `<button class="btn" type="button" data-close>閉じる</button>` : `<button class="btn sec" type="button" data-close>キャンセル</button><button class="btn" type="submit">保存</button>`}</div></div>`;
@@ -753,7 +763,7 @@ function openDlg(title, body, { submit, del, readOnly, draft } = {}) {
 let closeTimer = null;
 const reducedMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 function closeDlg() {
-  draftKey = null;
+  draftKey = null; S.sheet = null;
   if (!dlg.open) return;
   const done = () => { dlg.classList.remove("closing"); try { dlg.close(); } catch (e) { dlg.removeAttribute("open"); } closeTimer = null; };
   if (reducedMotion()) return done();
@@ -764,6 +774,84 @@ function showDlg() {
   if (!dlg.open) { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
   else { dlg.classList.remove("swap"); void dlg.offsetWidth; dlg.classList.add("swap"); }
 }
+/* ===== ボトムシート（スマホでは下から出る。PCでは中央の小窓） ===== */
+function openSheet(sheet) {
+  const r = sheetContent(sheet); if (!r) return;
+  form.innerHTML = `<div class="dlg-h"><h3 id="sheet-title">${esc(r.title)}</h3><button type="button" data-close aria-label="閉じる">×</button></div>
+    <div class="dlg-b sheet-b" data-sheet-body>${r.body}</div>${r.foot ? `<div class="dlg-f">${r.foot}</div>` : ""}`;
+  onSubmit = null; onDelete = null; draftKey = null; form.classList.add("is-sheet");
+  S.sheet = sheet; showDlg();
+}
+function refreshSheet() {
+  if (!S.sheet || !dlg.open) return; const r = sheetContent(S.sheet); if (!r) return closeDlg();
+  const b = form.querySelector("[data-sheet-body]"), t = form.querySelector("#sheet-title");
+  if (t) t.textContent = r.title; if (b) b.innerHTML = r.body;
+}
+function sheetContent(sh) {
+  if (sh.kind === "day") {
+    const list = S.tasks.filter(t => t.date === sh.d && (S.onlyMine ? (isMine(t) || (t.shareWith || []).includes(uid()) || t.createdBy === uid()) : relevant(t))).sort(sortTasks);
+    return { title: md(sh.d) + (sh.d === TODAY ? "　今日" : ""),
+      body: list.length ? list.map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">この日の業務はありません。</p>`,
+      foot: canWrite() ? `<div class="sp"><button class="btn" type="button" data-act="task-new" data-d="${sh.d}">この日に業務を登録</button></div>` : "" };
+  }
+  if (sh.kind === "month") {
+    const cur = S[sh.key]; const y = sh.y;
+    const cells = Array.from({ length: 12 }, (_, i) => { const v = `${y}-${String(i + 1).padStart(2, "0")}`;
+      return `<button type="button" class="mp-cell${v === cur ? " on" : ""}${v === THISMONTH ? " now" : ""}" data-act="mp-pick" data-v="${v}">${i + 1}月</button>`; }).join("");
+    return { title: "月を選ぶ",
+      body: `<div class="mp-year"><button type="button" class="ghost" data-act="mp-year" data-step="-1" aria-label="前の年">‹</button><b>${y}年</b><button type="button" class="ghost" data-act="mp-year" data-step="1" aria-label="次の年">›</button></div>
+        <div class="mp-grid">${cells}</div>`,
+      foot: cur !== THISMONTH ? `<div class="sp"><button class="btn sec" type="button" data-act="mp-pick" data-v="${THISMONTH}">今月に戻る</button></div>` : "" };
+  }
+  if (sh.kind === "kpi") {
+    const k = S.kpis.find(x => x.id === sh.id); if (!k) return null;
+    const w = k.weekly || {}; const weeks = meetingsOfMonth(k.month);
+    const rows = weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : null;
+      return `<div class="kd-row${wk === NEXTMTG ? " now" : ""}"><span>${mtgLabel(wk)}（${md(wk)}）${wk === NEXTMTG ? `<span class="pill plain">次回</span>` : ""}</span><b>${v === null ? `<span class="muted">未入力</span>` : num(v) + esc(k.unit || "")}</b></div>`; }).join("");
+    let head;
+    if (isTrack(k)) { const t = trackInfo(k); head = `<div class="kd-big"><b>${t.last ? num(t.last.v) : "—"}</b>${Number(k.target) > 0 ? ` / ${num(k.target)}` : ""}${esc(k.unit || "")} ${t.last ? deltaTag(t, k.unit) : ""}</div>`; }
+    else { const st = kpiStatus(k); head = `<div class="kd-big"><b>${num(st.a.v)}</b> / ${st.t > 0 ? num(st.t) : "—"}${esc(k.unit || "")} ${st.t > 0 ? `<span class="pill ${st.st.c}">${Math.round(st.rate * 100)}%</span>` : ""}</div>
+      ${st.t > 0 ? `<div class="meter"><i class="${st.st.c === "good" ? "good" : (st.st.c === "warn" || st.st.c === "bad") ? "warn" : ""}" style="width:${Math.min(100, st.rate * 100)}%"></i></div>` : ""}`; }
+    const canIn = canManage() || (k.owner === uid() && canWrite());
+    return { title: k.name, body: `${head}
+      <div class="kd-meta"><span>担当：${whoTag(k.owner)}</span><span>${isTrack(k) ? "記録のみ（最新値）" : k.mode === "latest" ? "最新値で集計" : "MTG・月末ごとの合計"}</span></div>
+      <div class="kd-list">${rows}</div>`,
+      foot: canIn ? `<div class="sp"><button class="btn" type="button" data-act="go" data-tab="kpi">進捗を入力する</button></div>` : "" };
+  }
+  if (sh.kind === "zoom") {
+    const z = uiZoom();
+    return { title: "表示サイズ", body: `<p class="muted" style="margin:0 0 10px;font-size:.85rem">文字やボタンをまとめて大きく・小さくします。この端末だけに保存されます。</p>
+      <div class="zoom-opts">${ZOOMS.map(([v, l]) => `<button type="button" class="zoom-opt${v === z ? " on" : ""}" data-act="zoom-set" data-v="${v}" aria-pressed="${v === z}"><span style="font-size:${Math.round(15 * v)}px">あ</span>${l}</button>`).join("")}</div>
+      <p class="muted" style="margin:12px 0 0;font-size:.78rem">スマホは2本指で広げても拡大できます。</p>` };
+  }
+  return null;
+}
+
+/* ===== スワイプで閉じる（スマホのボトムシート） ===== */
+(() => {
+  const mobile = () => window.matchMedia && matchMedia("(max-width:600px)").matches;
+  let y0 = null, dy = 0, t0 = 0, pid = null;
+  dlg.addEventListener("pointerdown", e => {
+    if (!mobile() || !dlg.open || e.button > 0) return;
+    const h = e.target.closest(".dlg-h"); if (!h || e.target.closest("button")) return;
+    y0 = e.clientY; dy = 0; t0 = performance.now(); pid = e.pointerId; dlg.classList.add("dragging");
+  });
+  document.addEventListener("pointermove", e => {
+    if (y0 === null || e.pointerId !== pid) return;
+    dy = Math.max(0, e.clientY - y0); dlg.style.transform = `translateY(${dy}px)`; e.preventDefault();
+  }, { passive: false });
+  const end = e => {
+    if (y0 === null || (e && e.pointerId !== pid)) return;
+    const v = dy / Math.max(1, performance.now() - t0); y0 = null; dlg.classList.remove("dragging");
+    if (dy > 90 || v > .6) {
+      dlg.style.transition = "transform .2s ease-in"; dlg.style.transform = "translateY(100%)";
+      // 入力途中の内容は下書きとして残っているので、次に開いたときに戻せる
+      setTimeout(() => { draftKey = null; S.sheet = null; try { dlg.close(); } catch (_) { dlg.removeAttribute("open"); } dlg.style.transition = ""; dlg.style.transform = ""; }, 200);
+    } else { dlg.style.transition = "transform .2s var(--ease-out)"; dlg.style.transform = ""; setTimeout(() => dlg.style.transition = "", 220); }
+  };
+  document.addEventListener("pointerup", end); document.addEventListener("pointercancel", end);
+})();
+
 function restoreDraft() {
   if (!draftKey) return; const d = memGet("draft_" + draftKey); if (!d) return;
   applyFormState(d);
@@ -976,7 +1064,7 @@ function issueDialog(it) {
       const data = { title: f.title.trim(), detail: f.detail.trim(), due: f.due || "", owners: f.__fd.getAll("owners") };
       if (!data.title) return showErr("内容を入力してください。"), false;
       if (it) await updateDoc(doc(db, "issues", it.id), data);
-      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "issues"), data); S.anim = "in"; return "未対応事項を追加しました"; }
+      else { Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp(), notified: false }); await addDoc(collection(db, "issues"), data); S.anim = "in"; return cfg().issueNotify === false ? "未対応事項を追加しました" : "未対応事項を追加しました。メンバーに通知されます"; }
     },
     del: it ? () => deleteDoc(doc(db, "issues", it.id)) : null,
     draft: it ? null : "issue"
@@ -1063,7 +1151,7 @@ document.addEventListener("click", async e => {
     if (tab.dataset.tab !== "admin") S.settingsDirty = false;
     if (S.tab !== tab.dataset.tab) S.anim = "in";
     S.tab = tab.dataset.tab; try { history.replaceState(null, "", "#" + S.tab); } catch (_) { } setMenu(false); render(); window.scrollTo(0, 0); return; }
-  const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) {
+  const a = e.target.closest("[data-act]"); if (!a || (a.closest("dialog") && !a.closest("form.is-sheet"))) {
     const rm = e.target.closest("[data-rm]"); if (rm && !rm.closest("dialog")) { rm.parentElement.remove(); markDirty(); return; }
     const ad = e.target.closest("[data-add]"); if (ad && !ad.closest("dialog")) { const box = document.querySelector(`[data-list="${ad.dataset.add}"]`); box.insertAdjacentHTML("beforeend", rowHTML(ad.dataset.add, Date.now(), "", "追加項目")); box.lastElementChild.querySelector("input").focus(); markDirty(); }
     return;
@@ -1072,7 +1160,13 @@ document.addEventListener("click", async e => {
   if (act === "login") return login();
   if (act === "logout") { if (notifyOn()) await disablePush(); await signOut(auth); return; }
   if (act === "notify") return notifyDialog();
-  if (act === "go") { S.anim = "in"; S.tab = a.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  if (act === "zoom") { setMenu(false); return openSheet({ kind: "zoom" }); }
+  if (act === "zoom-set") { ls.set("uiZoom", a.dataset.v); applyZoom(); refreshSheet(); toast("表示サイズを変えました"); return; }
+  if (act === "mpick") { const k = a.dataset.k; return openSheet({ kind: "month", key: k, y: Number(S[k].slice(0, 4)) }); }
+  if (act === "mp-year") { S.sheet.y += Number(a.dataset.step); refreshSheet(); return; }
+  if (act === "mp-pick") { const k = S.sheet.key; const v = a.dataset.v; closeDlg(); if (v !== S[k]) { S.anim = v < S[k] ? "r" : "l"; S[k] = v; if (k === "calMonth") S.selDay = v === THISMONTH ? TODAY : v + "-01"; render(); } return; }
+  if (act === "kpi-detail") return openSheet({ kind: "kpi", id });
+  if (act === "go") { if (dlg.open) closeDlg(); S.anim = "in"; S.tab = a.dataset.tab; render(); window.scrollTo(0, 0); return; }
   if (act === "mprev" || act === "mnext") { const k = a.dataset.k; S.anim = act === "mprev" ? "r" : "l"; S[k] = shiftMonth(S[k], act === "mprev" ? -1 : 1); if (k === "calMonth") S.selDay = S.calMonth === THISMONTH ? TODAY : S.calMonth + "-01"; render(); return; }
   if (act === "kpi-new") return kpiDialog(null);
   if (act === "kpi-tpl") return kpiDialog(null, KPI_TEMPLATES[+a.dataset.i]);
@@ -1088,7 +1182,9 @@ document.addEventListener("click", async e => {
   }
   if (act === "task-new") { if (!canWrite()) return; return taskDialog(null, a.dataset.d); }
   if (act === "task-open") return taskDialog(S.tasks.find(t => t.id === id));
-  if (act === "day") { S.selDay = a.dataset.d; S.pulse = ".day-panel"; render(); return; }
+  if (act === "day") { S.selDay = a.dataset.d; render();
+    if (window.matchMedia && matchMedia("(max-width:860px)").matches) openSheet({ kind: "day", d: a.dataset.d }); else { S.pulse = ".day-panel"; render(); }
+    return; }
   if (act === "led-new") return ledDialog(null);
   if (act === "led-edit") return ledDialog(S.ledger.find(r => r.id === id));
   if (act === "led-import") return importDialog();
@@ -1121,14 +1217,14 @@ document.addEventListener("click", async e => {
   if (act === "mem-status") { try { await updateDoc(doc(db, "members", id), { status: a.dataset.v }); toast(a.dataset.v === "active" ? "承認しました" : "停止しました"); } catch (err) { toast(errMsg(err), "error"); } return; }
   if (act === "save-settings") {
     const out = {}; ["routines", "expenseCats", "incomeCats", "methods"].forEach(k => { out[k] = [...document.querySelectorAll(`[data-list="${k}"] input`)].map(i => i.value.trim()).filter(Boolean); });
-    const nt = document.getElementById("s-notifyTime"), ne = document.getElementById("s-notifyEnabled"), vk = document.getElementById("s-vapid");
-    if (nt) out.notifyTime = nt.value; if (ne) out.notifyEnabled = ne.checked; if (vk) out.vapidKey = vk.value.trim();
+    const nt = document.getElementById("s-notifyTime"), ne = document.getElementById("s-notifyEnabled"), vk = document.getElementById("s-vapid"), ni = document.getElementById("s-issueNotify");
+    if (nt) out.notifyTime = nt.value; if (ne) out.notifyEnabled = ne.checked; if (ni) out.issueNotify = ni.checked; if (vk) out.vapidKey = vk.value.trim();
     try { await setDoc(doc(db, "config", "main"), out, { merge: true }); S.settingsDirty = false; toast("設定を保存しました"); render(); } catch (err) { toast(errMsg(err), "error"); }
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Enter") { const r = e.target.closest && e.target.closest("tr[data-act=led-edit]"); if (r) ledDialog(S.ledger.find(x => x.id === r.dataset.id)); } });
 document.addEventListener("change", async e => {
-  const a = e.target.closest("[data-act]"); if (!a || a.closest("dialog")) return;
+  const a = e.target.closest("[data-act]"); if (!a || (a.closest("dialog") && !a.closest("form.is-sheet"))) return;
   const act = a.dataset.act, id = a.dataset.id;
   if (act === "adm-sub") {
     if (S.adminSub === "settings" && S.settingsDirty && a.value !== "settings" && !S.leaveArmed) { a.checked = false; document.getElementById("adm-settings").checked = true; S.leaveArmed = true; toast("設定が未保存です。もう一度押すと変更を破棄して移動します", "warn"); setTimeout(() => S.leaveArmed = false, 4000); return; }

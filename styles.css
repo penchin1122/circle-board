@@ -59,7 +59,7 @@ main{padding-block:24px 64px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px 20px;min-width:0;box-shadow:0 1px 2px rgba(15,45,107,.04)}
 .panel h3{font-size:.95rem;margin:0 0 12px;font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .panel h3 .hint{font-weight:400;color:var(--muted);font-size:.8rem;margin-left:auto}
-.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:16px}
 .stack{display:flex;flex-direction:column;gap:16px}
 .muted{color:var(--muted)}
 .empty{border:1px dashed var(--line);border-radius:var(--radius);padding:24px;text-align:center;color:var(--muted);background:var(--surface)}
@@ -69,7 +69,7 @@ main{padding-block:24px 64px}
 .gbtn{display:inline-flex;align-items:center;gap:10px;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:var(--radius);padding:10px 20px;font-weight:700;cursor:pointer;font-size:.95rem}
 .gbtn:hover{border-color:var(--accent)}
 
-.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr));gap:12px;margin-bottom:16px}
 .fig{background:var(--surface-2);border:0;border-radius:8px;padding:12px 16px}
 .fig .k{font-size:.78rem;color:var(--muted);letter-spacing:.04em}
 .fig .v{font-size:1.45rem;font-weight:700;line-height:1.3}
@@ -405,7 +405,7 @@ dialog.swap .dlg-b{animation:soft-in .25s var(--ease-out)}
 .role-legend ul{margin:4px 0 6px;padding-left:1.2em}
 
 /* ===== 記録のみのKPI ===== */
-.track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0 24px}
+.track-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:0 24px}
 .track-grid .kpi{border-top:0;padding:4px 0 12px}
 .kpi.track .nums b{font-size:1.5rem}
 .delta{display:inline-block;font-size:.8rem;font-weight:700;padding:1px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);margin-left:4px;vertical-align:2px}
@@ -413,7 +413,7 @@ dialog.swap .dlg-b{animation:soft-in .25s var(--ease-out)}
 .delta.down{background:var(--bad-soft);color:var(--bad)}
 
 /* ===== フォーム ===== */
-.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:16px}
 .form-card{display:flex;flex-direction:column;gap:10px}
 .fc-head{display:flex;align-items:flex-start;gap:8px}
 .fc-head h3{margin:0;font-size:1rem;flex:1;min-width:0;overflow-wrap:anywhere}
@@ -563,4 +563,53 @@ label.checks input{margin-top:.3em;flex:none}
   .kpi-entry td.now[data-label]::before{content:attr(data-short) "・次回";color:var(--accent);font-weight:700}
   .kpi-entry td.now input.cell{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
   .kpi-entry input.cell{width:100%;font-size:16px;padding:8px;text-align:right;box-sizing:border-box}
+}
+
+/* ===== 月の選択（ボトムシート） ===== */
+.monthnav .mlabel{min-width:7.5em;text-align:center;font-weight:700;color:var(--fg);padding:4px 6px}
+.monthnav .mlabel:hover{background:var(--surface-2)}
+.mp-year{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:12px}
+.mp-year b{font-size:1.05rem;min-width:5em;text-align:center}
+.mp-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.mp-cell{padding:12px 0;border:1px solid var(--line);border-radius:8px;background:#FFFFFF;font-weight:700;color:var(--fg);cursor:pointer;transition:background-color .15s,border-color .15s,transform .12s var(--ease-out)}
+.mp-cell:hover{background:var(--surface-2)}
+.mp-cell:active{transform:scale(.96)}
+.mp-cell.now{border-color:var(--accent);color:var(--accent)}
+.mp-cell.on{background:var(--accent);border-color:var(--accent);color:#FFFFFF}
+@media (max-width:600px){.mp-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.mp-cell{padding:14px 0}}
+
+/* ===== シートの中身 ===== */
+.sheet-b{display:block}
+.sheet-b .task:first-child{border-top:0}
+.kpi.tap{cursor:pointer;border-radius:8px;margin-inline:-8px;padding-inline:8px;transition:background-color .15s}
+.kpi.tap:hover{background:var(--surface-2)}
+.kpi.tap:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.kd-big{font-size:1rem;margin-bottom:6px}
+.kd-big b{font-size:1.6rem;color:var(--navy)}
+.kd-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.82rem;color:var(--muted);margin:10px 0 12px}
+.kd-list{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.kd-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--line);font-size:.9rem}
+.kd-row:first-child{border-top:0}
+.kd-row.now{background:var(--accent-soft)}
+.kd-row .pill{margin-left:6px}
+.zoom-opts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.zoom-opt{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 0;border:1px solid var(--line);border-radius:8px;background:#FFFFFF;font-size:.8rem;font-weight:700;color:var(--fg);cursor:pointer;transition:background-color .15s,border-color .15s}
+.zoom-opt span{line-height:1.3;font-weight:700}
+.zoom-opt:hover{background:var(--surface-2)}
+.zoom-opt.on{border-color:var(--accent);background:var(--accent-soft);color:var(--navy)}
+.df-btns{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ===== スワイプで閉じる ===== */
+@media (max-width:600px){
+  dialog .dlg-h{touch-action:none;padding-top:18px}
+  dialog.dragging{animation:none!important;transition:none!important}
+  .drawer{width:min(300px,84%)}
+}
+
+/* ===== 幅が狭いとき（小さいスマホ・表示サイズ「大」「特大」）：時刻を上の行に出して本文を広く ===== */
+.panel,.sheet-b{container-type:inline-size}
+@container (max-width:340px){
+  .task{grid-template-columns:minmax(0,1fr) auto}
+  .task .time{grid-column:1/-1;min-width:0}
+  .task .sub{grid-column:1/-1}
 }
