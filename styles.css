@@ -637,3 +637,46 @@ dialog{overflow-x:hidden}
 .dlg-b.show-more .opt{animation:soft-in .25s var(--ease-out)}
 .more-btn{font-weight:700;font-size:.88rem;justify-self:start;padding:4px 0}
 .more-row .more-btn{align-self:flex-start;text-decoration:none}
+
+/* ===================== 議事録 ===================== */
+.min-list{display:flex;flex-direction:column;gap:10px}
+.min-item{display:grid;grid-template-columns:5.2em minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;margin:0;transition:border-color .15s,box-shadow .2s,transform .12s var(--ease-out)}
+.min-item:hover{border-color:var(--accent);box-shadow:0 2px 10px rgba(15,45,107,.08)}
+.min-item:active{transform:scale(.99)}
+.min-date{font-weight:700;color:var(--navy);font-size:.9rem}
+.min-body{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-width:0}
+.min-body b{font-size:.98rem}
+.min-body .muted{flex-basis:100%;font-size:.78rem}
+.min-go{color:var(--muted);font-size:1.4rem;line-height:1}
+.min-back{font-weight:700;text-decoration:none;font-size:.9rem}
+.bar .sp{margin-left:auto}
+.min-head{margin:-4px 0 14px}
+.min-head h2{margin:2px 0 0;font-size:1.25rem;font-family:var(--font-display)}
+.min-head .muted{font-size:.8rem}
+.min-sec h3{margin:0 0 8px}
+.min-sec ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px;line-height:1.6}
+.min-todos{display:flex;flex-direction:column}
+.min-todo{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)}
+.min-todo:first-child{border-top:0;padding-top:0}
+.min-todo > div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.min-todo .muted{font-size:.8rem}
+.min-todo .btn,.min-todo .pill{flex:none}
+.min-wait{display:flex;gap:14px;align-items:flex-start}
+.min-wait.err{border-color:var(--bad)}
+.min-raw summary{cursor:pointer;font-weight:700;font-size:.88rem;color:var(--accent)}
+.min-raw-text{margin-top:10px;white-space:pre-wrap;font-size:.85rem;line-height:1.8;color:var(--muted);max-height:50vh;overflow:auto}
+.spin{display:inline-block;width:.9em;height:.9em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:4px}
+.spin.lg{width:22px;height:22px;flex:none;color:var(--accent);margin:2px 0 0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.act-list{display:flex;flex-direction:column;gap:8px}
+.act-row{display:flex;flex-direction:column;gap:2px;text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:#FFFFFF;font:inherit;color:inherit;cursor:pointer}
+.act-row:hover{background:var(--surface-2)}
+.act-row .muted{font-size:.8rem}
+.act-row.danger b{color:var(--bad)}
+@media (max-width:600px){
+  .min-item{grid-template-columns:minmax(0,1fr) auto;gap:4px 10px}
+  .min-date{grid-column:1;font-size:.8rem}
+  .min-body{grid-column:1}
+  .min-go{grid-column:2;grid-row:1/3}
+  .min-todo{flex-direction:column;align-items:flex-start}
+}

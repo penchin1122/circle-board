@@ -89,13 +89,14 @@ const DEFAULT_KPIS = [
 ];
 const KPI_TEMPLATES = DEFAULT_KPIS;
 
-const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["forms", "フォーム"], ["money", "収支"], ["admin", "管理（設定・メンバー）"]];
+const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["forms", "フォーム"], ["money", "収支"], ["minutes", "議事録"], ["admin", "管理（設定・メンバー）"]];
 const TAB_ICON = {
   home: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>',
   kpi: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   forms: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   money: '<rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.5"/><path d="M6 9.5v.01M18 15.5v.01"/>',
+  minutes: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
   admin: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M17 4.5a3.5 3.5 0 0 1 0 7M19 14.8c1.3.9 2.2 2.6 2.5 5.2"/>'
 };
 const S = {
@@ -175,6 +176,7 @@ function startData() {
   listen("tasks", collection(db, "tasks"), s => S.tasks = docsOf(s));
   listen("forms", collection(db, "forms"), s => S.forms = docsOf(s));
   listen("issues", collection(db, "issues"), s => S.issues = docsOf(s));
+  listen("minutes", collection(db, "minutes"), s => S.minutes = docsOf(s));
   if (S.isAdmin) listen("invites", collection(db, "invites"), s => S.invites = docsOf(s));
   if (canManage()) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
   else {
@@ -373,7 +375,7 @@ function render() {
     return;
   }
   if (!S.need.length || !S.need.every(k => S.ready[k])) { if (!main.querySelector(".sk-wrap")) main.innerHTML = skeleton(S.tab); return; }
-  const views = { home: vHome, kpi: vKpi, cal: vCal, forms: vForms, money: vMoney, admin: vAdmin };
+  const views = { home: vHome, kpi: vKpi, cal: vCal, forms: vForms, money: vMoney, minutes: vMinutes, admin: vAdmin };
   if (S.tab === "admin" && S.adminSub === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
   const anim = S.anim || (main.querySelector(".sk-wrap") ? "in" : null); S.anim = null;
@@ -416,7 +418,7 @@ function skeleton(tab) {
   if (tab === "kpi") body = `<section class="panel">${skKpi(5)}</section>`;
   else if (tab === "cal") body = `<div class="callayout"><div class="cal sk-cal">${Array.from({ length: 35 }, () => `<div class="day">${sk("1.2em", 12)}</div>`).join("")}</div>${skPanel(3, "30%")}</div>`;
   else if (tab === "money") body = `<div class="figs">${Array.from({ length: 4 }, () => `<div class="fig">${sk("40%", 11)}<div style="margin-top:8px">${sk("70%", 22)}</div></div>`).join("")}</div>${skPanel(5, "25%")}`;
-  else if (tab === "admin" || tab === "forms") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
+  else if (tab === "admin" || tab === "forms" || tab === "minutes") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
   else body = `<div class="grid2"><div class="stack">${skPanel(2, "35%")}${skPanel(1, "45%")}</div><div class="stack"><section class="panel">${sk("35%", 16)}<div style="margin-top:14px">${skKpi(3)}</div></section></div></div>`;
   return `<div class="sk-wrap" role="status" aria-label="読み込み中">${head}${body}<span class="visually-hidden">読み込み中です</span></div>`;
 }
@@ -602,6 +604,117 @@ function vForms() {
       <div class="fc-url">${esc(f.url)}</div>
       <div class="fc-acts"><button class="btn" type="button" data-act="form-copy" data-id="${esc(f.id)}">${f.message ? "案内文をコピー" : "リンクをコピー"}</button>${f.message ? `<button class="btn sec" type="button" data-act="form-copy-url" data-id="${esc(f.id)}">リンクだけ</button>` : ""}<a class="btn sec" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">開く</a>${canManage() && safeUrl(f.respUrl) ? `<a class="link" href="${esc(safeUrl(f.respUrl))}" target="_blank" rel="noopener">回答を見る</a>` : ""}</div>
     </article>`).join("")}</div>`;
+}
+/* ===================== 議事録 ===================== */
+// 文字起こしを貼ると、GitHubの自動実行（5分ごと）がGeminiで要約して書き戻す
+const MIN_STALE = 20 * 60 * 1000;
+const tsMs = t => (t && t.toMillis ? t.toMillis() : 0);
+const minTime = m => tsMs(m.createdAt);
+const canEditMin = m => canManage() || (m.createdBy === uid() && canWrite());
+const minBusy = m => m.status === "pending" || m.status === "processing";
+const minStuck = m => { const t = Math.max(minTime(m), tsMs(m.queuedAt), m.startedAt ? Date.parse(m.startedAt) || 0 : 0); return minBusy(m) && t > 0 && Date.now() - t > MIN_STALE; };
+function minStatusPill(m) {
+  if (minBusy(m)) return minStuck(m) ? `<span class="pill bad">止まっています</span>` : `<span class="pill warn"><span class="spin" aria-hidden="true"></span>まとめ中</span>`;
+  if (m.status === "error") return `<span class="pill bad">まとめられませんでした</span>`;
+  return "";
+}
+const minTitle = m => m.title || "MTGの議事録";
+function vMinutes() {
+  const list = [...(S.minutes || [])].sort((a, b) => (b.date || "").localeCompare(a.date || "") || minTime(b) - minTime(a));
+  if (S.minId) { const m = list.find(x => x.id === S.minId); if (m) return vMinuteDetail(m); S.minId = null; }
+  const head = `<div class="bar"><h2 class="vh">議事録</h2>${canWrite() ? `<button class="btn" type="button" data-act="min-new">議事録を追加</button>` : ""}</div>
+    <p class="muted" style="font-size:.85rem;margin:-8px 0 14px">MTGの音声を文字起こししたものを貼り付けると、5〜15分ほどで「要点・決定事項・やること」に自動でまとまります。</p>`;
+  if (!list.length) return head + `<div class="empty"><p>まだ議事録がありません。</p>${canWrite() ? `<button class="btn small" type="button" data-act="min-new">最初の議事録を追加</button>` : ""}</div>`;
+  return head + `<div class="min-list">${list.map(m => {
+    const n = (m.todos || []).length, dc = ((m.summary || {}).decisions || []).length;
+    return `<button type="button" class="panel min-item" data-act="min-open" data-id="${esc(m.id)}">
+      <span class="min-date">${m.date ? md(m.date) : ""}</span>
+      <span class="min-body"><b>${esc(minTitle(m))}</b>${minStatusPill(m)}
+        <span class="muted">${m.status === "done" ? `決定事項${dc}件・やること${n}件` : minBusy(m) ? "自動でまとめています" : m.status === "error" ? "開いて、もう一度まとめてください" : ""}・追加：${esc(memName(m.createdBy))}</span></span>
+      <span class="min-go" aria-hidden="true">›</span></button>`; }).join("")}</div>`;
+}
+const minList = (title, items, empty) => `<section class="panel min-sec"><h3>${title}</h3>${items && items.length ? `<ul>${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="muted" style="margin:0">${empty}</p>`}</section>`;
+function vMinuteDetail(m) {
+  const sm = m.summary || {}; const todos = m.todos || []; const ed = canEditMin(m);
+  const back = `<button class="link min-back" type="button" data-act="min-back">‹ 議事録の一覧</button>`;
+  const tools = `${ed && m.status === "done" ? `<button class="btn sec small" type="button" data-act="min-edit" data-id="${esc(m.id)}">要約を直す</button>` : ""}${ed ? `<button class="btn sec small" type="button" data-act="min-more" data-id="${esc(m.id)}">その他</button>` : ""}`;
+  let body;
+  if (minBusy(m) && !minStuck(m)) body = `<section class="panel min-wait"><span class="spin lg" aria-hidden="true"></span><div><b>自動でまとめています</b><p class="muted" style="margin:4px 0 0">追加から5〜15分ほどで、ここに要約が表示されます。このページを閉じても大丈夫です。まとまったら追加した人に通知が届きます。</p></div></section>`;
+  else if (minBusy(m) || m.status === "error") body = `<section class="panel min-wait err"><div><b>${minBusy(m) ? "まとめる処理が止まっているようです" : "まとめられませんでした"}</b>
+      ${m.error ? `<p class="muted" style="margin:4px 0 0">理由：${esc(m.error)}</p>` : ""}
+      ${ed ? `<p style="margin:10px 0 0"><button class="btn small" type="button" data-act="min-retry" data-id="${esc(m.id)}">もう一度まとめる</button></p>` : `<p class="muted" style="margin:6px 0 0">追加した人か管理者が、もう一度まとめ直せます。</p>`}</div></section>`;
+  else body = `${minList("要点", sm.points, "なし")}${minList("決定事項", sm.decisions, "決まったことはありませんでした")}
+    <section class="panel min-sec"><h3>やること</h3>${todos.length ? `<div class="min-todos">${todos.map((t, i) => `<div class="min-todo">
+        <div><b>${esc(t.task)}</b><span class="muted">${t.owner ? "担当：" + esc(t.owner) : "担当：未定"}${t.due ? "・期限：" + md(t.due) : ""}</span></div>
+        ${t.issueId ? `<span class="pill good">未対応事項に追加済み</span>` : canWrite() ? `<button class="btn sec small" type="button" data-act="min-todo" data-id="${esc(m.id)}" data-i="${i}">未対応事項に追加</button>` : ""}</div>`).join("")}</div>` : `<p class="muted" style="margin:0">やることはありませんでした</p>`}</section>
+    ${minList("保留・次回に持ち越し", sm.pending, "なし")}`;
+  return `<div class="bar">${back}<span class="sp"></span>${tools}</div>
+    <div class="min-head"><span class="muted">${m.date ? md(m.date) : ""}・追加：${esc(memName(m.createdBy))}</span><h2>${esc(minTitle(m))}</h2></div>
+    <div class="stack">${body}
+      <details class="panel min-raw"><summary>文字起こしの原文を見る（${num((m.transcript || "").length)}文字）</summary><div class="min-raw-text">${esc(m.transcript || "")}</div></details></div>`;
+}
+function minuteDialog() {
+  const body = fld("MTGの日付", `<input type="date" name="date" id="f-date" required value="${esc(NEXTMTG && NEXTMTG <= TODAY ? NEXTMTG : TODAY)}">`, { full: true, req: true }) +
+    `<div class="field full"><span class="lbl">文字起こし<span class="req">必須</span></span><textarea name="transcript" id="f-transcript" rows="8" placeholder="MTGの音声を文字起こししたものを、そのまま貼り付けてください" style="min-height:160px"></textarea>
+      <span class="help">iPhoneのボイスメモの「文字起こし」や、LINE・Googleドキュメントの音声入力の結果をそのまま貼ってOKです。えーと・あの等は自動で取り除かれます。<label class="link" style="cursor:pointer">テキストファイルから読み込む<input type="file" id="f-txt" accept=".txt,text/plain" hidden></label></span></div>` +
+    moreBtn("タイトルを付ける（空欄なら自動で付きます）") +
+    fld("タイトル（任意）", `<input name="title" id="f-title" placeholder="例：10月第4回 定例MTG">`, { full: true, opt: true });
+  openDlg("議事録を追加", body, {
+    submit: async f => {
+      const tr = (f.transcript || "").trim();
+      if (tr.length < 50) return showErr("文字起こしが短すぎます。MTGの文字起こしを貼り付けてください。"), false;
+      if (tr.length > 200000) return showErr("文字起こしが長すぎます（20万文字まで）。"), false;
+      if (!f.date) return showErr("日付を入力してください。"), false;
+      const ref = await addDoc(collection(db, "minutes"), { date: f.date, title: (f.title || "").trim(), transcript: tr, status: "pending", createdBy: uid(), createdAt: serverTimestamp() });
+      S.minId = ref.id; S.anim = "in";
+      return "議事録を追加しました。5〜15分ほどで自動でまとまります";
+    },
+    draft: "minute"
+  });
+  const fi = form.querySelector("#f-txt");
+  if (fi) fi.addEventListener("change", async () => { const file = fi.files[0]; if (!file) return; const t = await file.text(); const ta = form.querySelector("#f-transcript"); ta.value = t; ta.dispatchEvent(new Event("input", { bubbles: true })); toast(`${num(t.length)}文字を読み込みました`); });
+}
+const lines = s => (s || "").split("\n").map(x => x.replace(/^[-・*\s]+/, "").trim()).filter(Boolean);
+function parseDue(s, base) {
+  s = (s || "").trim(); if (!s) return "";
+  let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/); if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})[\/月](\d{1,2})日?$/); if (!m) return null;
+  let y = Number((base || TODAY).slice(0, 4)); const d = `${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  return d < (base || TODAY) && (base || TODAY).slice(5, 7) === "12" && m[1] !== "12" ? `${y + 1}${d.slice(4)}` : d;
+}
+function minuteEditDialog(m) {
+  const sm = m.summary || {}; const todos = m.todos || [];
+  const ta = (name, label, arr, help) => fld(label, `<textarea name="${name}" id="f-${name}" rows="4">${esc((arr || []).join("\n"))}</textarea>`, { full: true, help });
+  const body = fld("タイトル", `<input name="title" id="f-title" value="${esc(m.title || "")}">`, { full: true }) +
+    fld("MTGの日付", `<input type="date" name="date" id="f-date" value="${esc(m.date || "")}">`, { full: true }) +
+    ta("points", "要点", sm.points, "1行に1つ") + ta("decisions", "決定事項", sm.decisions, "1行に1つ") +
+    fld("やること", `<textarea name="todos" id="f-todos" rows="5">${esc(todos.map(t => [t.task, t.owner || "", t.due ? md(t.due).replace(/\(.\)/, "") : ""].join(" / ").replace(/( \/ )+$/, "")).join("\n"))}</textarea>`, { full: true, help: "1行に1つ。「内容 / 担当 / 期限」の形（例：チラシを印刷する / 佐藤 / 10/30）" }) +
+    ta("pending", "保留・次回に持ち越し", sm.pending, "1行に1つ");
+  openDlg("要約を直す", body, {
+    submit: async f => {
+      const nt = [];
+      for (const l of lines(f.todos)) {
+        const [task, owner = "", due = ""] = l.split(/\s+\/\s+|\s*／\s*/);
+        const d = parseDue(due, m.date); if (d === null) return showErr(`期限の形が読み取れません：「${due}」（例：10/30）`), false;
+        const old = todos.find(t => t.task === task.trim());
+        nt.push({ task: task.trim(), owner: owner.trim(), due: d, ...(old && old.issueId ? { issueId: old.issueId } : {}) });
+      }
+      await updateDoc(doc(db, "minutes", m.id), { title: f.title.trim(), date: f.date || m.date, summary: { points: lines(f.points), decisions: lines(f.decisions), pending: lines(f.pending) }, todos: nt, editedBy: uid() });
+      return "要約を保存しました";
+    }
+  });
+}
+function minuteMoreDialog(m) {
+  openSheet({ kind: "min-more", id: m.id });
+}
+async function minuteTodoToIssue(m, i) {
+  const t = (m.todos || [])[i]; if (!t || t.issueId) return;
+  const owner = (t.owner || "").replace(/さん$/, "").trim();
+  const owners = owner ? activeMembers().filter(x => { const n = (x.name || "").replace(/\s/g, ""); return n && (n.includes(owner.replace(/\s/g, "")) || owner.replace(/\s/g, "").includes(n)); }).map(x => x.id) : [];
+  const ref = await addDoc(collection(db, "issues"), { title: t.task, detail: `議事録（${m.date ? md(m.date) : ""}${m.title ? " " + m.title : ""}）より${t.owner && !owners.length ? `\n担当：${t.owner}` : ""}`, due: t.due || "", owners, done: false, createdBy: uid(), createdAt: serverTimestamp(), notified: false });
+  const todos = (m.todos || []).map((x, j) => j === i ? { ...x, issueId: ref.id } : x);
+  await updateDoc(doc(db, "minutes", m.id), { todos });
+  toast(owners.length ? "未対応事項に追加しました" : "未対応事項に追加しました（担当は未定のまま）");
 }
 function formDialog(fm) {
   const v = fm || { name: "", url: "", desc: "", message: "", respUrl: "" };
@@ -816,6 +929,13 @@ function sheetContent(sh) {
       <div class="kd-meta"><span>担当：${whoTag(k.owner)}</span><span>${isTrack(k) ? "記録のみ（最新値）" : k.mode === "latest" ? "最新値で集計" : "MTG・月末ごとの合計"}</span></div>
       <div class="kd-list">${rows}</div>`,
       foot: canIn ? `<div class="sp"><button class="btn" type="button" data-act="go" data-tab="kpi">進捗を入力する</button></div>` : "" };
+  }
+  if (sh.kind === "min-more") {
+    const m = (S.minutes || []).find(x => x.id === sh.id); if (!m) return null;
+    return { title: "議事録の操作", body: `<div class="act-list">
+      <button type="button" class="act-row" data-act="min-retry" data-id="${esc(m.id)}"><b>もう一度まとめ直す</b><span class="muted">今の要約を消して、原文からAIでまとめ直します（直した内容も上書きされます）</span></button>
+      <button type="button" class="act-row" data-act="min-copy" data-id="${esc(m.id)}"><b>要約をコピー</b><span class="muted">LINEなどに貼り付けられる形でコピーします</span></button>
+      <button type="button" class="act-row danger" data-act="min-del" data-id="${esc(m.id)}"><b>${S.armDel === m.id ? "本当に削除する（もう一度押す）" : "この議事録を削除"}</b><span class="muted">原文と要約が消えます。元に戻せません</span></button></div>` };
   }
   return null;
 }
@@ -1222,6 +1342,19 @@ document.addEventListener("click", async e => {
   if (act === "issue-new") { if (canWrite()) issueDialog(null); return; }
   if (act === "issue-open") return issueDialog((S.issues || []).find(i => i.id === id));
   if (act === "issue-showdone") { S.showDoneIssues = !S.showDoneIssues; render(); return; }
+  if (act === "min-new") { if (canWrite()) minuteDialog(); return; }
+  if (act === "min-open") { S.minId = id; S.anim = "l"; render(); window.scrollTo(0, 0); return; }
+  if (act === "min-back") { S.minId = null; S.anim = "r"; render(); return; }
+  if (act === "min-edit") { const m = (S.minutes || []).find(x => x.id === id); if (m) minuteEditDialog(m); return; }
+  if (act === "min-more") { const m = (S.minutes || []).find(x => x.id === id); if (m) minuteMoreDialog(m); return; }
+  if (act === "min-retry") { closeDlg(); try { await updateDoc(doc(db, "minutes", id), { status: "pending", error: "", startedAt: "", queuedAt: serverTimestamp() }); toast("もう一度まとめます。5〜15分ほどお待ちください"); } catch (err) { toast(errMsg(err), "error"); } return; }
+  if (act === "min-todo") { const m = (S.minutes || []).find(x => x.id === id); if (m) { try { await minuteTodoToIssue(m, Number(a.dataset.i)); } catch (err) { toast(errMsg(err), "error"); } } return; }
+  if (act === "min-copy") { const m = (S.minutes || []).find(x => x.id === id); if (m) { const sm = m.summary || {}; const sec = (t, a) => a && a.length ? `【${t}】\n` + a.map(x => "・" + x).join("\n") + "\n" : "";
+    copyPlain(`${m.date ? md(m.date) : ""} ${minTitle(m)}\n\n` + sec("要点", sm.points) + sec("決定事項", sm.decisions) + sec("やること", (m.todos || []).map(t => t.task + (t.owner ? `（${t.owner}${t.due ? "・" + md(t.due) : ""}）` : t.due ? `（${md(t.due)}）` : ""))) + sec("保留・次回に持ち越し", sm.pending), "要約をコピーしました"); closeDlg(); } return; }
+  if (act === "min-del") {
+    if (S.armDel !== id) { S.armDel = id; refreshSheet(); clearTimeout(S.armTimer); S.armTimer = setTimeout(() => { S.armDel = null; refreshSheet(); }, 5000); return; }
+    S.armDel = null; closeDlg(); try { await deleteDoc(doc(db, "minutes", id)); S.minId = null; toast("議事録を削除しました"); render(); } catch (err) { toast(errMsg(err), "error"); } return;
+  }
   if (act === "form-new") return formDialog(null);
   if (act === "form-edit") return formDialog((S.forms || []).find(f => f.id === id));
   if (act === "form-copy") { const f = (S.forms || []).find(x => x.id === id); if (f) copyPlain(formShareText(f), f.message ? "案内文をコピーしました" : "リンクをコピーしました"); return; }
