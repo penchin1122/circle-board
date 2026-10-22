@@ -710,3 +710,7 @@ dialog{overflow-x:hidden}
 .money-figs{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media (max-width:600px){.money-figs{grid-template-columns:repeat(2,minmax(0,1fr))}.money-figs .fig .v{font-size:1.2rem}}
 .fig.card-pay .k{white-space:normal}
+/* ホーム：2列のとき（PC）は「お金」を左列の一番下、1列（スマホ）のときはKPIの下 */
+.home-grid{container-type:inline-size}
+.fin-l{display:none}
+@container (min-width:656px){.fin-l{display:block}.fin-r{display:none}}

@@ -467,7 +467,7 @@ function vHome() {
       ${uns.length ? uns.map(r => `<div class="row3"><span>${md(r.date)}</span><span>${esc(r.title)}（${esc(r.owner || "")}）</span><span>${yen(r.amount)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:.85rem">ありません。</p>`}</section>`;
   }
   return `<div class="bar"><h2>${md(TODAY)}</h2><span class="muted">${esc(memName(uid()))}さん</span></div>
-  <div class="grid2">
+  <div class="grid2 home-grid">
     <div class="stack">
       <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : ""}</span></h3>
         ${myOpen ? mine.filter(t => !t.done).map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">${mine.length ? "今日の業務はすべて完了しました。" : "今日の業務はありません。"}</p>`}
@@ -480,12 +480,13 @@ function vHome() {
         ${doneIssues.length ? `<button class="link done-toggle" type="button" data-act="issue-showdone">${S.showDoneIssues ? "完了済みを隠す" : `完了済み ${doneIssues.length}件を表示`}</button>${S.showDoneIssues ? `<div class="done-list">${doneIssues.map(issueItem).join("")}</div>` : ""}` : ""}
       </section>
       ${myLate.length ? `<section class="panel"><h3>自分の未対応<span class="hint">${myLate.length}件</span></h3>${myLate.map(t => taskItem(t, { late: true, showDate: true })).join("")}</section>` : ""}
+      ${fin ? `<div class="fin-l">${fin}</div>` : ""}
     </div>
     <div class="stack">
       <section class="panel"><h3>今月のKPI<button class="link hint" type="button" data-act="go" data-tab="kpi">進捗を入力</button></h3>
         ${ks.length ? ks.map(k => kpiRow(k, false)).join("") : `<p class="muted" style="margin:0">${canManage() ? "今月のKPIはまだ設定されていません。" : "表示できる今月のKPIはありません。"}</p>`}
       </section>
-      ${fin}
+      ${fin ? `<div class="fin-r">${fin}</div>` : ""}
     </div>
   </div>`;
 }
