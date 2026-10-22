@@ -90,7 +90,7 @@ const DEFAULT_KPIS = [
 ];
 const KPI_TEMPLATES = DEFAULT_KPIS;
 
-const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["reports", "活動レポート"], ["forms", "フォーム"], ["templates", "テンプレ一覧"], ["money", "収支"], ["minutes", "議事録"], ["admin", "管理（設定・メンバー）"]];
+const TABS_ALL = [["home", "ホーム"], ["cal", "業務カレンダー"], ["kpi", "KPI"], ["reports", "活動レポート"], ["forms", "フォーム"], ["templates", "テンプレ一覧"], ["minutes", "議事録"], ["money", "収支"], ["admin", "管理（設定・メンバー）"]];
 const TAB_ICON = {
   home: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>',
   kpi: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -703,7 +703,7 @@ function vForms() {
       ${f.desc ? `<p class="fc-desc">${esc(f.desc)}</p>` : ""}
       ${f.message ? `<div class="fc-msg"><span class="lbl">送るときの文面</span><p>${esc(f.message)}</p></div>` : ""}
       <div class="fc-url">${esc(f.url)}</div>
-      <div class="fc-acts"><button class="btn" type="button" data-act="form-copy" data-id="${esc(f.id)}">${f.message ? "案内文をコピー" : "リンクをコピー"}</button>${f.message ? `<button class="btn sec" type="button" data-act="form-copy-url" data-id="${esc(f.id)}">リンクだけ</button>` : ""}<a class="btn sec" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">開く</a>${canManage() && safeUrl(f.respUrl) ? `<a class="link" href="${esc(safeUrl(f.respUrl))}" target="_blank" rel="noopener">回答を見る</a>` : ""}</div>
+      <div class="fc-acts"><button class="btn" type="button" data-act="form-copy" data-id="${esc(f.id)}">${f.message ? "案内文をコピー" : "リンクをコピー"}</button>${f.message ? `<button class="btn sec" type="button" data-act="form-copy-url" data-id="${esc(f.id)}">リンクだけ</button>` : ""}<a class="btn sec" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">開く</a>${canManage() && safeUrl(f.editUrl) ? `<a class="btn sec" href="${esc(safeUrl(f.editUrl))}" target="_blank" rel="noopener">編集する</a>` : ""}${canManage() && safeUrl(f.respUrl) ? `<a class="link" href="${esc(safeUrl(f.respUrl))}" target="_blank" rel="noopener">回答を見る</a>` : ""}</div>
     </article>`).join("")}</div>`;
 }
 /* ===================== 活動レポート ===================== */
@@ -927,18 +927,23 @@ async function minuteTodoToIssue(m, i) {
   toast(owners.length ? "未対応事項に追加しました" : "未対応事項に追加しました（担当は未定のまま）");
 }
 function formDialog(fm) {
-  const v = fm || { name: "", url: "", desc: "", message: "", respUrl: "" };
+  const v = fm || { name: "", url: "", editUrl: "", desc: "", message: "", respUrl: "" };
   const body = fld("フォームの名前", `<input name="name" id="f-name" required value="${esc(v.name)}" placeholder="例：体験参加申込フォーム">`, { full: true, req: true }) +
-    fld("フォームのURL", `<input name="url" id="f-url" type="url" required value="${esc(v.url)}" placeholder="https://forms.gle/…">`, { full: true, req: true, help: "Googleフォームの「送信」→リンクのアイコンで出るURL（短縮URLでOK）" }) +
+    fld("公開用のURL（送る人向け）", `<input name="url" id="f-url" type="url" required value="${esc(v.url)}" placeholder="https://forms.gle/…">`, { full: true, req: true, help: "Googleフォームの「送信」→リンクのアイコンで出るURL（短縮URLでOK）。回答する人が開くリンクです" }) +
+    fld("編集用のURL（任意）", `<input name="editUrl" id="f-editUrl" type="url" value="${esc(v.editUrl || "")}" placeholder="https://docs.google.com/forms/d/…/edit">`, { full: true, help: "フォームを編集する画面のURL（ブラウザのアドレス欄の、最後が /edit のもの）。管理者・副管理者だけに「編集する」として表示されます。編集するには、Googleフォーム側でその人を共同編集者に追加しておく必要があります" }) +
     fld("説明（運営向けメモ）", `<input name="desc" id="f-desc" value="${esc(v.desc || "")}" placeholder="例：体験会の申込受付用。毎回の告知で使う">`, { full: true }) +
     fld("送るときの文面（任意）", `<textarea name="message" id="f-message" placeholder="例：体験会のお申し込みはこちらからお願いします！">${esc(v.message || "")}</textarea>`, { full: true, help: "入れておくと「案内文をコピー」で、この文面とURLがまとめてコピーされます" }) +
     fld("回答を見るURL（任意）", `<input name="respUrl" id="f-respUrl" type="url" value="${esc(v.respUrl || "")}" placeholder="回答のスプレッドシートやフォームの編集画面のURL">`, { full: true, help: "管理者・副管理者だけに「回答を見る」として表示されます" });
   openDlg(fm ? "フォームを編集" : "フォームを追加", body, {
     submit: async f => {
-      const url = (f.url || "").trim(), respUrl = (f.respUrl || "").trim();
+      const url = (f.url || "").trim(), respUrl = (f.respUrl || "").trim(), editUrl = (f.editUrl || "").trim();
+      if (editUrl && !safeUrl(editUrl)) return showErr("編集用のURLは https:// から始まる形で入れてください。"), false;
+      if (editUrl && editUrl === url) return showErr("公開用と編集用に同じURLが入っています。編集用は、最後が /edit のURLを入れてください。"), false;
+      if (/\/viewform/.test(editUrl)) return showErr("編集用のURLに、回答用（/viewform）のURLが入っています。最後が /edit のURLを入れてください。"), false;
+      if (/\/edit(\?|#|$)/.test(url)) return showErr("公開用のURLに編集用（/edit）のURLが入っています。送る人向けのリンク（forms.gle や /viewform）を入れてください。"), false;
       if (!safeUrl(url)) return showErr("URLは https:// から始まる形で入れてください。"), false;
       if (respUrl && !safeUrl(respUrl)) return showErr("回答を見るURLは https:// から始まる形で入れてください。"), false;
-      const data = { name: f.name.trim(), url, desc: f.desc.trim(), message: f.message.trim(), respUrl };
+      const data = { name: f.name.trim(), url, editUrl, desc: f.desc.trim(), message: f.message.trim(), respUrl };
       if (!data.name) return showErr("フォームの名前を入力してください。"), false;
       if (fm) await updateDoc(doc(db, "forms", fm.id), data);
       else { data.order = Date.now(); data.createdAt = serverTimestamp(); await addDoc(collection(db, "forms"), data); S.anim = "in"; }
