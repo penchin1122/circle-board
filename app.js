@@ -19,7 +19,8 @@ const DOW = ["日", "月", "火", "水", "木", "金", "土"];
 const md = s => { if (!s) return ""; const d = parse(s); return (d.getMonth() + 1) + "/" + d.getDate() + "(" + DOW[d.getDay()] + ")"; };
 const monthLabel = m => { const [y, mm] = m.split("-"); return y + "年" + Number(mm) + "月"; };
 const shiftMonth = (m, k) => { const d = parse(m + "-01"); d.setMonth(d.getMonth() + k); return ym(d); };
-const mondayOf = d => { const x = new Date(d); x.setDate(x.getDate() - (x.getDay() + 6) % 7); return x; };
+/* カレンダーは日曜始まり */
+const weekStart = d => { const x = new Date(d); x.setDate(x.getDate() - x.getDay()); return x; };
 const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
 // 定例ミーティング：毎月 第2・第4木曜日。KPIの進捗はこの2回の時点で入力する
 function meetingsOfMonth(m) {
@@ -518,12 +519,12 @@ function vKpi() {
 }
 
 function vCal() {
-  const m = S.calMonth; const first = parse(m + "-01"); const start = mondayOf(first);
+  const m = S.calMonth; const first = parse(m + "-01"); const start = weekStart(first);
   const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
-  const endGrid = new Date(last); endGrid.setDate(endGrid.getDate() + (6 - (last.getDay() + 6) % 7));
+  const endGrid = new Date(last); endGrid.setDate(endGrid.getDate() + (6 - last.getDay()));
   const vis = S.onlyMine ? S.tasks.filter(t => isMine(t) || (t.shareWith || []).includes(uid()) || t.createdBy === uid()) : S.tasks.filter(relevant);
   const byDay = {}; vis.forEach(t => { (byDay[t.date] = byDay[t.date] || []).push(t); });
-  let cells = ["月", "火", "水", "木", "金", "土", "日"].map(d => `<div class="dow">${d}</div>`).join("");
+  let cells = DOW.map((d, i) => `<div class="dow${i === 0 ? " sun" : i === 6 ? " sat" : ""}">${d}</div>`).join("");
   for (let d = new Date(start); d <= endGrid; d.setDate(d.getDate() + 1)) {
     const k = ymd(d); const list = (byDay[k] || []).sort(sortTasks);
     const cls = ["day", ym(d) !== m ? "out" : "", k === TODAY ? "today" : "", k === S.selDay ? "sel" : ""].join(" ");
@@ -546,11 +547,48 @@ function vCal() {
   </div>`;
 }
 
+/* ===== 銀行残高（照会用）：クレジットカードは「毎月15日締め・翌月10日引き落とし（休日なら翌営業日）」で反映 ===== */
+const isCard = r => /クレジット|カード/.test(r.method || "");
+function nthMonday(y, mo, n) { const d = new Date(y, mo, 1); const first = (8 - d.getDay()) % 7 + 1; return first + (n - 1) * 7; }
+function isBankHoliday(d) {
+  const y = d.getFullYear(), mo = d.getMonth(), day = d.getDate(), w = d.getDay();
+  if (w === 0 || w === 6) return true;
+  if ((mo === 0 && day <= 3) || (mo === 11 && day === 31)) return true;   // 年末年始
+  const fixed = { "0-1": 1, "1-11": 1, "1-23": 1, "3-29": 1, "4-3": 1, "4-4": 1, "4-5": 1, "7-11": 1, "10-3": 1, "10-23": 1 };
+  const equinox = { [`2-${Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4))}`]: 1, [`8-${Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4))}`]: 1 };
+  const happy = { [`0-${nthMonday(y, 0, 2)}`]: 1, [`6-${nthMonday(y, 6, 3)}`]: 1, [`8-${nthMonday(y, 8, 3)}`]: 1, [`9-${nthMonday(y, 9, 2)}`]: 1 };
+  const key = (m, dd) => `${m}-${dd}`; const isHol = (m, dd) => fixed[key(m, dd)] || equinox[key(m, dd)] || happy[key(m, dd)];
+  if (isHol(mo, day)) return true;
+  // 振替休日：日曜の祝日の翌日（月曜）
+  if (w === 1) { const prev = new Date(y, mo, day - 1); if (isHol(prev.getMonth(), prev.getDate())) return true; }
+  return false;
+}
+function cardPayDate(useDate) {
+  const d = parse(useDate); const add = d.getDate() <= 15 ? 1 : 2;
+  const p = new Date(d.getFullYear(), d.getMonth() + add, 10);
+  while (isBankHoliday(p)) p.setDate(p.getDate() + 1);
+  return ymd(p);
+}
+function bankBalance(asOf) {
+  let bal = 0; const upcoming = {};
+  S.ledger.forEach(r => {
+    if (!r.date) return; const amt = Number(r.amount) || 0;
+    if (r.type === "収入") { if (r.date <= asOf) bal += amt; return; }
+    if (r.type !== "支出") return;
+    if (!isCard(r)) { if (r.date <= asOf) bal -= amt; return; }
+    const pay = cardPayDate(r.date);
+    if (pay <= asOf) bal -= amt;
+    else if (r.date <= asOf) upcoming[pay] = (upcoming[pay] || 0) + amt;   // 使ったが、まだ引き落とされていない分
+  });
+  const next = Object.keys(upcoming).sort()[0];
+  return { bal, pending: Object.values(upcoming).reduce((a, b) => a + b, 0), next: next ? { date: next, amount: upcoming[next] } : null };
+}
 function vMoney() {
   const m = S.moneyMonth; const rows = S.ledger.filter(r => (r.date || "").startsWith(m)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const inc = sumBy(rows, "収入"), exp = sumBy(rows, "支出");
-  const upto = S.ledger.filter(r => (r.date || "").slice(0, 7) <= m);
-  const bal = sumBy(upto, "収入") - sumBy(upto, "支出");
+  const monthEnd = ymd(new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0));
+  const asOf = m === THISMONTH ? TODAY : monthEnd;
+  const bk = bankBalance(asOf);
   const group = type => { const o = {}; rows.filter(r => r.type === type).forEach(r => o[r.category || "その他"] = (o[r.category || "その他"] || 0) + (Number(r.amount) || 0)); return o; };
   const cats = group("支出"), icats = group("収入");
   const maxC = Math.max(1, ...Object.values(cats), ...Object.values(icats));
@@ -561,7 +599,8 @@ function vMoney() {
     <div class="fig"><div class="k">収入</div><div class="v pos">${cu(inc, "yen")}</div></div>
     <div class="fig"><div class="k">支出</div><div class="v neg">${cu(exp, "yen")}</div></div>
     <div class="fig"><div class="k">月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${cu(inc - exp, "yen", inc - exp >= 0 ? "+" : "−")}</div></div>
-    <div class="fig"><div class="k">月末時点の残高</div><div class="v">${cu(bal, "yen", bal < 0 ? "−" : "")}</div></div>
+    <div class="fig"><div class="k">銀行残高（${m === THISMONTH ? "今日" : md(asOf).replace(/\(.\)/, "")}時点）</div><div class="v">${cu(bk.bal, "yen", bk.bal < 0 ? "−" : "")}</div>
+      <div class="s">${bk.next ? `カード ${yen(bk.next.amount)} が${md(bk.next.date)}に引き落とし予定${bk.pending > bk.next.amount ? `（未引き落とし計 ${yen(bk.pending)}）` : ""}` : "未引き落としのカード利用なし"}</div></div>
   </div>
   <div class="stack">
     ${rows.length ? `<div class="tablewrap"><table class="ledger-table"><thead><tr><th>日付</th><th>項目</th><th>区分</th><th>カテゴリ</th><th class="num">金額</th><th>担当者</th><th>支払方法</th><th>精算</th></tr></thead><tbody>
@@ -1183,8 +1222,8 @@ function wireMultiDate(initial) {
   const getSel = () => new Set((hid.value || "").split(",").filter(Boolean));
   const setSel = set => { hid.value = [...set].sort().join(","); form.dispatchEvent(new Event("change")); };
   const draw = (dir) => {
-    const sel = getSel(); const first = parse(pickMonth + "-01"); const start = mondayOf(first);
-    let cells = ["月", "火", "水", "木", "金", "土", "日"].map(d => `<span class="mp-dow">${d}</span>`).join("");
+    const sel = getSel(); const first = parse(pickMonth + "-01"); const start = weekStart(first);
+    let cells = DOW.map((d, i) => `<span class="mp-dow${i === 0 ? " sun" : i === 6 ? " sat" : ""}">${d}</span>`).join("");
     for (let i = 0; i < 42; i++) {
       const d = new Date(start); d.setDate(start.getDate() + i); const k = ymd(d);
       if (i >= 35 && ym(d) !== pickMonth) break;

@@ -702,3 +702,7 @@ dialog{overflow-x:hidden}
 .grid2 > *{min-width:0}
 .members-table .seen{font-size:.75rem;color:var(--muted);margin-top:2px}
 .members-table .seen.old{color:var(--warn,#B25E09);font-weight:700}
+/* 曜日の見出し：日曜は赤、土曜は青（控えめに） */
+.cal .dow.sun,.mp-dow.sun{color:var(--bad)}
+.cal .dow.sat,.mp-dow.sat{color:var(--accent)}
+.fig .s{font-size:.74rem;color:var(--muted);margin-top:2px;line-height:1.5}
