@@ -20,6 +20,11 @@ on:
         type: boolean
         default: false
 
+# 外部（cron-job.org）からの実行と定期実行が重なっても、1つずつ順番に動かす（二重送信を防ぐ）
+concurrency:
+  group: notify
+  cancel-in-progress: false
+
 jobs:
   send:
     runs-on: ubuntu-latest
