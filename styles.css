@@ -714,3 +714,61 @@ dialog{overflow-x:hidden}
 .home-grid{container-type:inline-size}
 .fin-l{display:none}
 @container (min-width:656px){.fin-l{display:block}.fin-r{display:none}}
+#label-field.pop{animation:soft-in .25s var(--ease-out)}
+.task .what .pill{font-size:.68rem;vertical-align:2px}
+
+/* ===================== 参加可否 ===================== */
+.rsvp{display:flex;gap:6px;margin:8px 0 2px}
+.rs{flex:1;min-width:0;padding:7px 0;border:1px solid var(--line);border-radius:6px;background:#FFFFFF;font:inherit;font-size:.82rem;font-weight:700;color:var(--muted);cursor:pointer;transition:background-color .15s,border-color .15s,color .15s,transform .12s var(--ease-out)}
+.rs:hover{border-color:var(--accent)}
+.rs:active{transform:scale(.96)}
+.rs.on{background:var(--accent-soft);border-color:var(--accent);color:var(--navy)}
+.rsvp-box{grid-column:1/-1;margin-top:4px}
+.rv-list{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.rv{display:flex;gap:8px;align-items:baseline;font-size:.78rem;flex-wrap:wrap}
+.rv b{flex:none;min-width:4.2em}
+.rv-yes{color:var(--good)}.rv-no{color:var(--bad)}
+.ask-panel{border-color:var(--accent)}
+.ask{padding:10px 0;border-top:1px solid var(--line)}
+.ask:first-of-type{border-top:0;padding-top:0}
+
+/* ===================== 活動レポート ===================== */
+.rep-sum{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.85rem;color:var(--muted);margin:-6px 0 14px}
+.rep-sum b{color:var(--fg);font-size:1.05rem}
+.rep-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:12px}
+.rep-card{display:flex;flex-direction:column;gap:6px;margin:0}
+.rep-card.todo{border-color:#E8B57E}
+.rep-card .btn{align-self:flex-start}
+.rep-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rep-h b{color:var(--navy)}
+.rep-meta{font-size:.8rem}
+.rep-nums{display:flex;gap:18px}
+.rep-nums div{display:flex;flex-direction:column}
+.rep-nums span{font-size:.72rem;color:var(--muted)}
+.rep-nums b{font-size:1.15rem}
+.rep-line{font-size:.86rem;line-height:1.6;display:flex;gap:10px}
+.rep-line span{flex:none;width:4.5em;color:var(--navy);font-weight:700;font-size:.8rem;padding-top:1px}
+.rep-f{display:flex;justify-content:space-between;align-items:center;font-size:.78rem;border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+.kpi-auto{grid-column:1/-1;margin:-4px 0 0;font-size:.78rem;color:var(--good);background:var(--good-soft);border-radius:6px;padding:6px 10px}
+.ment-sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip-btn{border:1px solid var(--line);background:#FFFFFF;border-radius:999px;padding:3px 10px;font:inherit;font-size:.78rem;color:var(--muted);cursor:pointer}
+.chip-btn:hover{border-color:var(--accent);color:var(--navy)}
+.chip-btn:disabled{opacity:.4;cursor:default}
+.auto-add{display:block;font-size:.7rem;color:var(--good);margin-top:3px;white-space:nowrap}
+
+/* ===================== テンプレ一覧 ===================== */
+.tpl-q{flex:1 1 220px;max-width:360px;margin-right:auto;border:1px solid var(--line);border-radius:6px;padding:8px 12px;background:#FFFFFF}
+.tpl-q:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.tpl-cats{display:flex;gap:6px;flex-wrap:wrap;margin:-6px 0 14px}
+.tpl-cat{border:1px solid var(--line);background:#FFFFFF;border-radius:999px;padding:5px 12px;font:inherit;font-size:.82rem;font-weight:700;color:var(--muted);cursor:pointer}
+.tpl-cat span{margin-left:6px;font-weight:400;font-size:.75rem}
+.tpl-cat.on{background:var(--accent-soft);border-color:var(--accent);color:var(--navy)}
+.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:12px}
+.tpl-card{display:flex;flex-direction:column;gap:8px;margin:0}
+.tpl-card[hidden]{display:none}
+.tpl-h{display:flex;align-items:center;gap:8px}
+.tpl-h h3{margin:0;font-size:.98rem}
+.tpl-body{white-space:pre-wrap;font-size:.86rem;line-height:1.75;color:var(--fg);background:var(--surface-2);border-radius:6px;padding:10px 12px;max-height:12.5em;overflow:auto}
+.tpl-f{display:flex;align-items:center;gap:12px;margin-top:auto}
+.tpl-f .muted{margin-left:auto;font-size:.75rem}
+@media (max-width:600px){.tpl-q{max-width:none;order:3;flex-basis:100%}}

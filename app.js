@@ -90,11 +90,13 @@ const DEFAULT_KPIS = [
 ];
 const KPI_TEMPLATES = DEFAULT_KPIS;
 
-const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["forms", "フォーム"], ["money", "収支"], ["minutes", "議事録"], ["admin", "管理（設定・メンバー）"]];
+const TABS_ALL = [["home", "ホーム"], ["kpi", "KPI"], ["cal", "業務カレンダー"], ["reports", "活動レポート"], ["forms", "フォーム"], ["templates", "テンプレ一覧"], ["money", "収支"], ["minutes", "議事録"], ["admin", "管理（設定・メンバー）"]];
 const TAB_ICON = {
   home: '<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>',
   kpi: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  reports: '<path d="M9 3h6v3H9z"/><path d="M15 4.5h2a2 2 0 0 1 2 2V19a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2"/><path d="M9 12l2 2 4-4"/>',
+  templates: '<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>',
   forms: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   money: '<rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.5"/><path d="M6 9.5v.01M18 15.5v.01"/>',
   minutes: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
@@ -104,7 +106,7 @@ const S = {
   user: null, member: null, isAdmin: false, dataKey: "",
   members: [], config: null, tasks: [], kpis: [], ledger: [],
   ready: {}, need: [],
-  tab: "home", adminSub: "settings", forms: [], kpiMonth: THISMONTH, calMonth: THISMONTH, selDay: TODAY, moneyMonth: THISMONTH,
+  tab: "home", adminSub: "settings", forms: [], kpiMonth: THISMONTH, calMonth: THISMONTH, repMonth: THISMONTH, tplCat: "all", selDay: TODAY, moneyMonth: THISMONTH,
   onlyMine: ls.get("cb_onlymine", "0") === "1"
 };
 let memberUnsub = null, dataUnsubs = [];
@@ -197,6 +199,8 @@ function startData() {
   listen("forms", collection(db, "forms"), s => S.forms = docsOf(s));
   listen("issues", collection(db, "issues"), s => S.issues = docsOf(s));
   listen("minutes", collection(db, "minutes"), s => S.minutes = docsOf(s));
+  listen("reports", collection(db, "reports"), s => S.reports = docsOf(s));
+  listen("templates", collection(db, "templates"), s => S.templates = docsOf(s));
   if (S.isAdmin) listen("invites", collection(db, "invites"), s => S.invites = docsOf(s));
   if (canManage()) listen("kpis", collection(db, "kpis"), s => S.kpis = docsOf(s));
   else {
@@ -222,10 +226,15 @@ async function login() {
 /* ================= KPI math ================= */
 function kpiActual(k) {
   const w = k.weekly || {}; const keys = Object.keys(w).filter(x => w[x] && w[x].value !== null && w[x].value !== undefined && w[x].value !== "").sort();
-  if (!keys.length) return { v: 0, has: false };
-  if (k.mode === "latest") return { v: Number(w[keys[keys.length - 1]].value) || 0, has: true };
-  return { v: keys.reduce((a, x) => a + (Number(w[x].value) || 0), 0), has: true };
+  let base = { v: 0, has: false };
+  if (keys.length) base = k.mode === "latest" ? { v: Number(w[keys[keys.length - 1]].value) || 0, has: true } : { v: keys.reduce((a, x) => a + (Number(w[x].value) || 0), 0), has: true };
+  // 体験参加者数は、活動レポートの「うち体験参加者」を自動で足す
+  if (isTrialKpi(k)) { const add = reportTrial(k.month); if (add) return { v: base.v + add, has: true, auto: add }; }
+  return base;
 }
+const isTrialKpi = k => k.name === "体験参加者数" && k.mode !== "latest";
+const trialCk = d => meetingsOfMonth(d.slice(0, 7)).find(x => x >= d);
+const reportTrial = (month, ck) => (S.reports || []).filter(r => r.date && r.date.slice(0, 7) === month && (!ck || trialCk(r.date) === ck)).reduce((a, r) => a + (Number(r.trial) || 0), 0);
 function monthElapsed(m) {
   if (m < THISMONTH) return 1; if (m > THISMONTH) return 0;
   return today.getDate() / new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -287,18 +296,32 @@ const ownerDots = t => ownersOf(t).map(o => `<i class="od" style="--mc:${mColor(
 const relevant = t => sharedAll(t) || isMine(t) || (t.shareWith || []).includes(uid()) || t.createdBy === uid();
 const canEditTask = t => canManage() || (t.createdBy === uid() && canWrite());
 const canToggleTask = t => canEditTask(t) || (isMine(t) && canWrite());
-const taskTitle = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "（内容未記入）");
+/* 「当日運営」は、その日の活動名（例：GD講習会）をラベルとして表示する */
+const needsLabel = r => /当日運営/.test(r || "");
+const taskTitle = t => t.label ? t.label : t.routine && t.routine !== "__other" ? t.routine : (t.detail || "（内容未記入）");
 const timeLabel = t => !t.start ? "終日" : esc(t.start) + (t.end ? "–" + esc(t.end) : "〜");
 const sortTasks = (a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || ""));
+/* ===== 参加可否（当日運営の予定だけ） ===== */
+const isEvent = t => needsLabel(t.routine);
+const RSVP = [["yes", "参加"], ["no", "不参加"], ["maybe", "未定"]];
+const myRsvp = t => (t.rsvp || {})[uid()];
+function rsvpGroups(t) { const r = t.rsvp || {}; const g = { yes: [], maybe: [], no: [], none: [] }; activeMembers().forEach(m => (g[r[m.id]] || g.none).push(m.id)); return g; }
+const rsvpBtns = t => `<div class="rsvp" role="group" aria-label="参加可否">${RSVP.map(([v, l]) => `<button type="button" class="rs${myRsvp(t) === v ? " on" : ""}" data-act="rsvp" data-id="${esc(t.id)}" data-v="${v}" aria-pressed="${myRsvp(t) === v}">${l}${myRsvp(t) === v ? " ✓" : ""}</button>`).join("")}</div>`;
+function rsvpBox(t) {
+  if (!isEvent(t)) return "";
+  const g = rsvpGroups(t); const row = (k, l, c) => g[k].length ? `<div class="rv"><b class="${c}">${l} ${g[k].length}</b><span>${g[k].map(whoTag).join(" ")}</span></div>` : "";
+  return `<div class="rsvp-box">${t.date >= TODAY ? rsvpBtns(t) : ""}<div class="rv-list">${row("yes", "参加", "rv-yes")}${row("maybe", "未定", "")}${row("no", "不参加", "rv-no")}${t.date >= TODAY ? row("none", "未回答", "muted") : ""}</div></div>`;
+}
 function taskItem(t, opts = {}) {
   const sw = sharedAll(t) ? "全員に共有" : "共有：" + t.shareWith.map(memName).join("・");
   const late = opts.late ? `<span class="pill bad">${daysBetween(t.date, TODAY)}日遅れ</span> ` : "";
   const sub = [opts.showDate ? md(t.date) : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
   return `<div class="task${t.done ? " done" : ""}" style="--mc:${mColor(ownersOf(t)[0])}">
     <div class="time">${timeLabel(t)}</div>
-    <div><div class="what">${late}${esc(taskTitle(t))}</div><div class="whos">${whoTags(t)}</div></div>
+    <div><div class="what">${late}${esc(taskTitle(t))}${t.label && t.routine ? ` <span class="pill plain">${esc(t.routine)}</span>` : ""}</div><div class="whos">${whoTags(t)}</div></div>
     <div class="acts">${canToggleTask(t) ? `<label><input type="checkbox" data-act="task-done" data-id="${esc(t.id)}" ${t.done ? "checked" : ""}>完了</label>` : (t.done ? `<span class="pill good">完了</span>` : "")}<button class="link" type="button" data-act="task-open" data-id="${esc(t.id)}">${canEditTask(t) ? "編集" : "詳細"}</button></div>
     <div class="sub">${esc(sub)}</div>
+    ${rsvpBox(t)}
   </div>`;
 }
 const sumBy = (rows, type) => rows.filter(r => r.type === type).reduce((a, r) => a + (Number(r.amount) || 0), 0);
@@ -395,13 +418,14 @@ function render() {
     return;
   }
   if (!S.need.length || !S.need.every(k => S.ready[k])) { if (!main.querySelector(".sk-wrap")) main.innerHTML = skeleton(S.tab); return; }
-  const views = { home: vHome, kpi: vKpi, cal: vCal, forms: vForms, money: vMoney, minutes: vMinutes, admin: vAdmin };
+  const views = { home: vHome, kpi: vKpi, cal: vCal, forms: vForms, money: vMoney, minutes: vMinutes, reports: vReports, templates: vTemplates, admin: vAdmin };
   if (S.tab === "admin" && S.adminSub === "settings" && (S.settingsDirty || S.dragging) && main.querySelector("[data-list]")) return;
   const prevScroll = window.scrollY;
   const anim = S.anim || (main.querySelector(".sk-wrap") ? "in" : null); S.anim = null;
   main.innerHTML = views[S.tab]();
   if (anim && !reducedMotion()) runEnter(main, anim);
   refreshSheet();
+  if (S.tab === "templates") applyTplFilter();
   if (S.pulse) { const el = main.querySelector(S.pulse); S.pulse = null; if (el && !reducedMotion()) { el.classList.remove("pulse-in"); void el.offsetWidth; el.classList.add("pulse-in"); } }
   if (S.isAdmin) { setTimeout(() => { seedMonth(THISMONTH); if (S.tab === "kpi") seedMonth(S.kpiMonth); }, 0); }
   window.scrollTo(0, prevScroll);
@@ -438,7 +462,7 @@ function skeleton(tab) {
   if (tab === "kpi") body = `<section class="panel">${skKpi(5)}</section>`;
   else if (tab === "cal") body = `<div class="callayout"><div class="cal sk-cal">${Array.from({ length: 35 }, () => `<div class="day">${sk("1.2em", 12)}</div>`).join("")}</div>${skPanel(3, "30%")}</div>`;
   else if (tab === "money") body = `<div class="figs">${Array.from({ length: 4 }, () => `<div class="fig">${sk("40%", 11)}<div style="margin-top:8px">${sk("70%", 22)}</div></div>`).join("")}</div>${skPanel(5, "25%")}`;
-  else if (tab === "admin" || tab === "forms" || tab === "minutes") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
+  else if (tab === "admin" || tab === "forms" || tab === "minutes" || tab === "reports" || tab === "templates") body = `<div class="grid2">${skPanel(4)}${skPanel(4)}</div>`;
   else body = `<div class="grid2"><div class="stack">${skPanel(2, "35%")}${skPanel(1, "45%")}</div><div class="stack"><section class="panel">${sk("35%", 16)}<div style="margin-top:14px">${skKpi(3)}</div></section></div></div>`;
   return `<div class="sk-wrap" role="status" aria-label="読み込み中">${head}${body}<span class="visually-hidden">読み込み中です</span></div>`;
 }
@@ -466,10 +490,17 @@ function vHome() {
       <div class="muted" style="font-size:.8rem;font-weight:700">未精算の立替 ${uns.length}件</div>
       ${uns.length ? uns.map(r => `<div class="row3"><span>${md(r.date)}</span><span>${esc(r.title)}（${esc(r.owner || "")}）</span><span>${yen(r.amount)}</span></div>`).join("") : `<p class="muted" style="margin:0;font-size:.85rem">ありません。</p>`}</section>`;
   }
+  const in30 = ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30));
+  const askList = S.tasks.filter(t => isEvent(t) && t.date >= TODAY && t.date <= in30 && !myRsvp(t)).sort((a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")));
+  const from30 = ymd(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30));
+  const unrep = canWrite() ? S.tasks.filter(t => isEvent(t) && t.date < TODAY && t.date >= from30 && isMine(t) && !(S.reports || []).some(r => r.id === t.id)).sort((a, b) => b.date.localeCompare(a.date)) : [];
+  const askPanel = askList.length ? `<section class="panel ask-panel"><h3>参加の回答をお願いします<span class="hint">${askList.length}件</span></h3>${askList.map(t => `<div class="ask"><div><b>${md(t.date)} ${t.start ? esc(t.start) + " " : ""}${esc(taskTitle(t))}</b><div class="muted" style="font-size:.78rem">${esc(t.routine)}・担当：${esc(ownersOf(t).map(memName).join("・") || "未定")}</div></div>${rsvpBtns(t)}</div>`).join("")}</section>` : "";
+  const unrepBanner = unrep.length ? `<div class="banner" style="margin:0 0 10px">活動レポートが未記入です：${unrep.map(t => `${md(t.date)} ${esc(taskTitle(t))} <button class="link" type="button" data-act="rep-write" data-id="${esc(t.id)}">書く</button>`).join("、")}</div>` : "";
   return `<div class="bar"><h2>${md(TODAY)}</h2><span class="muted">${esc(memName(uid()))}さん</span></div>
   <div class="grid2 home-grid">
     <div class="stack">
-      <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : ""}</span></h3>
+      ${askPanel}
+      <section class="panel"><h3>今日やること<span class="hint">${myOpen ? `残り${myOpen}件` : ""}</span></h3>${unrepBanner}
         ${myOpen ? mine.filter(t => !t.done).map(t => taskItem(t)).join("") : `<p class="muted" style="margin:0">${mine.length ? "今日の業務はすべて完了しました。" : "今日の業務はありません。"}</p>`}
         ${myKpiNoReport.length ? `<div class="banner" style="margin:12px 0 0">${untilMtg === 0 ? "今日" : untilMtg === 1 ? "明日" : untilMtg + "日後"}の${mtgName(NEXTMTG) === "月末" ? "月末締め" : "MTG"}（${md(NEXTMTG)}）までにKPIの報告をお願いします：${myKpiNoReport.map(k => esc(k.name)).join("、")} <button class="link" type="button" data-act="go" data-tab="kpi">入力する</button></div>` : ""}
       </section>
@@ -508,7 +539,7 @@ function vKpi() {
     const tgt = Number(k.target) > 0 ? `目標 ${num(k.target)}${esc(k.unit || "")}` : "目標未設定";
     return `<tr><td><span class="kname"><b>${esc(k.name)}</b>${isTrack(k) ? ` <span class="pill plain">記録のみ</span>` : ""}</span><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}・${tgt}</div>${tools}</td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
-        return `<td class="num${wk === NEXTMTG ? " now" : ""}" data-label="${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}" data-short="${mtgLabel(wk)}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}</td>`; }).join("")}</tr>`;
+        return `<td class="num${wk === NEXTMTG ? " now" : ""}" data-label="${mtgLabel(wk)} ${md(wk).replace(/\(.\)/, "")}" data-short="${mtgLabel(wk)}">${editable ? `<input class="cell" id="c-${esc(k.id)}-${wk}" type="number" inputmode="decimal" step="any" aria-label="${esc(k.name)} ${mtgLabel(wk)} ${md(wk)}" data-act="kpi-cell" data-id="${esc(k.id)}" data-wk="${wk}" value="${esc(v)}">` : (v === "" ? `<span class="muted">—</span>` : num(v))}${isTrialKpi(k) && reportTrial(k.month, wk) ? `<span class="auto-add">＋レポート ${num(reportTrial(k.month, wk))}</span>` : ""}</td>`; }).join("")}</tr>`;
   }).join("");
   return head + `<section class="panel kpi-entry"><h3>MTG・月末ごとの進捗入力<span class="hint hide-sm">進捗はホームで確認</span></h3>
       <p class="kpi-note">第2・第4木曜のMTGと月末に、担当者が実績を入力します。入力すると自動で保存されます。</p>
@@ -531,7 +562,7 @@ function vCal() {
     const cls = ["day", ym(d) !== m ? "out" : "", k === TODAY ? "today" : "", k === S.selDay ? "sel" : ""].join(" ");
     cells += `<button type="button" class="${cls}" data-act="day" data-d="${k}" aria-label="${md(k)} 予定${list.length}件">
       <span class="d"><span>${d.getDate()}</span></span>
-      ${list.slice(0, 3).map(t => `<span class="chip${t.done ? " done" : ""}" style="--mc:${mColor(ownersOf(t)[0])}">${ownersOf(t).length > 1 ? `<span class="chip-dots">${ownerDots(t)}</span>` : ""}${esc(t.start || "")} ${esc(taskTitle(t))}</span>`).join("")}
+      ${list.slice(0, 3).map(t => `<span class="chip${t.done ? " done" : ""}" style="--mc:${mColor(ownersOf(t)[0])}">${ownersOf(t).length > 1 ? `<span class="chip-dots">${ownerDots(t)}</span>` : ""}${esc(t.start || "")} ${esc(taskTitle(t))}${isEvent(t) ? ` ${rsvpGroups(t).yes.length}人` : ""}</span>`).join("")}
       ${list.length > 3 ? `<span class="more">ほか${list.length - 3}件</span>` : ""}
       <span class="dots">${list.map(t => `<i style="--mc:${mColor(ownersOf(t)[0])}"></i>`).join("")}</span></button>`;
   }
@@ -675,6 +706,105 @@ function vForms() {
       <div class="fc-acts"><button class="btn" type="button" data-act="form-copy" data-id="${esc(f.id)}">${f.message ? "案内文をコピー" : "リンクをコピー"}</button>${f.message ? `<button class="btn sec" type="button" data-act="form-copy-url" data-id="${esc(f.id)}">リンクだけ</button>` : ""}<a class="btn sec" href="${esc(safeUrl(f.url))}" target="_blank" rel="noopener">開く</a>${canManage() && safeUrl(f.respUrl) ? `<a class="link" href="${esc(safeUrl(f.respUrl))}" target="_blank" rel="noopener">回答を見る</a>` : ""}</div>
     </article>`).join("")}</div>`;
 }
+/* ===================== 活動レポート ===================== */
+// 「当日運営」の予定が終わると、自動で「未記入」として並ぶ。レポートのIDは予定のIDと同じ
+function vReports() {
+  const m = S.repMonth; const reps = S.reports || [];
+  const evs = S.tasks.filter(t => isEvent(t) && (t.date || "").startsWith(m) && t.date <= TODAY);
+  const items = evs.map(t => ({ id: t.id, t, r: reps.find(r => r.id === t.id), date: t.date, label: taskTitle(t), start: t.start || "" }));
+  reps.filter(r => (r.date || "").startsWith(m) && !items.some(x => x.id === r.id)).forEach(r => items.push({ id: r.id, t: null, r, date: r.date, label: r.label || "活動", start: "" }));
+  items.sort((a, b) => (b.date + b.start).localeCompare(a.date + a.start));
+  const done = items.filter(x => x.r); const sum = k => done.reduce((a, x) => a + (Number(x.r[k]) || 0), 0);
+  const head = `<div class="bar"><h2 class="vh">活動レポート</h2>${monthNav("repMonth")}</div>
+    <div class="rep-sum"><span>記入済み <b>${done.length}</b> / ${items.length}件</span><span>参加者 <b>${num(sum("participants"))}</b>人</span><span>うち体験 <b>${num(sum("trial"))}</b>人</span></div>`;
+  if (!items.length) return head + `<div class="empty"><p>${monthLabel(m)}に終わった「当日運営」の予定はありません。</p><p class="muted" style="font-size:.85rem">業務カレンダーで「当日運営」を登録すると、その日が過ぎたらここに並びます。</p></div>`;
+  return head + `<div class="rep-list">${items.map(x => {
+    const r = x.r; const staff = x.t ? rsvpGroups(x.t).yes.length : 0;
+    const hd = `<div class="rep-h"><b>${md(x.date)} ${esc(x.label)}</b>${r ? `<span class="pill good">記入済</span>` : `<span class="pill warn">未記入</span>`}</div>`;
+    if (!r) return `<article class="panel rep-card todo">${hd}<div class="muted rep-meta">${x.t ? `担当：${esc(ownersOf(x.t).map(memName).join("・") || "未定")}` : ""}${staff ? `・参加した運営 ${staff}人` : ""}</div>${canWrite() ? `<button class="btn small" type="button" data-act="rep-write" data-id="${esc(x.id)}">レポートを書く</button>` : ""}</article>`;
+    return `<article class="panel rep-card">${hd}
+      <div class="rep-nums"><div><span>参加者</span><b>${num(r.participants)}人</b></div><div><span>うち体験</span><b>${num(r.trial || 0)}人</b></div>${staff ? `<div><span>運営</span><b>${staff}人</b></div>` : ""}</div>
+      ${r.mentors ? `<div class="rep-line"><span>メンター</span>${esc(r.mentors)}</div>` : ""}
+      ${r.good ? `<div class="rep-line"><span>良かった</span>${esc(r.good)}</div>` : ""}
+      ${r.improve ? `<div class="rep-line"><span>改善</span>${esc(r.improve)}</div>` : ""}
+      <div class="rep-f"><span class="muted">記入：${esc(memName(r.updatedBy || r.createdBy))}</span>${canWrite() ? `<button class="link" type="button" data-act="rep-write" data-id="${esc(x.id)}">編集</button>` : ""}</div></article>`;
+  }).join("")}</div>`;
+}
+function ckRange(d) {
+  const mts = meetingsOfMonth(d.slice(0, 7)); const i = mts.findIndex(x => x >= d); if (i < 0) return "";
+  const from = i === 0 ? d.slice(0, 7) + "-01" : ymd(new Date(parse(mts[i - 1]).getTime() + 864e5));
+  return `${mtgLabel(mts[i])}の回：${md(from).replace(/\(.\)/, "")}〜${md(mts[i]).replace(/\(.\)/, "")}`;
+}
+function reportDialog(id) {
+  const t = S.tasks.find(x => x.id === id); const r = (S.reports || []).find(x => x.id === id);
+  const date = t ? t.date : r && r.date; const label = t ? taskTitle(t) : (r && r.label) || "活動"; if (!date) return;
+  const v = r || { participants: "", trial: "", mentors: "", good: "", improve: "" };
+  const past = [...new Set((S.reports || []).flatMap(x => (x.mentors || "").split(/[、,，・]/)).map(x => x.trim()).filter(Boolean))].slice(0, 12);
+  const body = fld("参加者数", `<input type="number" inputmode="numeric" min="0" step="1" name="participants" id="f-participants" required value="${esc(v.participants)}">`, { half: true, req: true }) +
+    fld("うち体験参加者", `<input type="number" inputmode="numeric" min="0" step="1" name="trial" id="f-trial" value="${esc(v.trial)}">`, { half: true }) +
+    `<p class="kpi-auto full">体験参加者数は、KPI（${ckRange(date)}）に自動で足されます</p>` +
+    fld("メンター", `<input name="mentors" id="f-mentors" value="${esc(v.mentors || "")}" placeholder="例：田中さん（商社）、山本さん">${past.length ? `<div class="ment-sugg">${past.map(n => `<button type="button" class="chip-btn" data-ment="${esc(n)}">＋${esc(n)}</button>`).join("")}</div>` : ""}`, { full: true, help: "複数いるときは「、」で区切る" }) +
+    fld("良かったこと", `<textarea name="good" id="f-good" rows="2" placeholder="1〜2行で">${esc(v.good || "")}</textarea>`, { full: true }) +
+    fld("次回の改善点", `<textarea name="improve" id="f-improve" rows="2" placeholder="1〜2行で">${esc(v.improve || "")}</textarea>`, { full: true });
+  openDlg(`${md(date)} ${label}のレポート`, body, {
+    submit: async f => {
+      const p = Number(f.participants), tr = f.trial === "" ? 0 : Number(f.trial);
+      if (f.participants === "" || !Number.isInteger(p) || p < 0) return showErr("参加者数を0以上の整数で入力してください。"), false;
+      if (!Number.isInteger(tr) || tr < 0) return showErr("体験参加者数を0以上の整数で入力してください。"), false;
+      if (tr > p) return showErr("体験参加者数が参加者数より多くなっています。"), false;
+      const data = { taskId: id, date, label, participants: p, trial: tr, mentors: (f.mentors || "").trim(), good: (f.good || "").trim(), improve: (f.improve || "").trim(), updatedBy: uid(), updatedAt: serverTimestamp() };
+      if (!r) Object.assign(data, { createdBy: uid(), createdAt: serverTimestamp() });
+      await setDoc(doc(db, "reports", id), data, { merge: true }); S.anim = "in";
+      return r ? "レポートを更新しました" : tr ? `レポートを保存しました（体験参加者数のKPIに+${tr}）` : "レポートを保存しました";
+    },
+    del: r && canManage() ? () => deleteDoc(doc(db, "reports", id)) : null,
+    draft: r ? null : "rep_" + id
+  });
+}
+document.addEventListener("click", e => { const b = e.target.closest("[data-ment]"); if (!b) return; const i = document.getElementById("f-mentors"); if (!i) return;
+  const cur = i.value.split(/[、,，]/).map(x => x.trim()).filter(Boolean); if (!cur.includes(b.dataset.ment)) cur.push(b.dataset.ment); i.value = cur.join("、"); i.dispatchEvent(new Event("input", { bubbles: true })); b.disabled = true; });
+
+/* ===================== テンプレ一覧 ===================== */
+const canEditTpl = tp => canManage() || (tp.createdBy === uid() && canWrite());
+function vTemplates() {
+  const list = [...(S.templates || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const cats = [...new Set(list.map(x => x.category).filter(Boolean))];
+  if (S.tplCat !== "all" && !cats.includes(S.tplCat)) S.tplCat = "all";
+  const shown = list.filter(x => S.tplCat === "all" || x.category === S.tplCat);
+  const head = `<div class="bar"><h2 class="vh">テンプレ一覧</h2><input type="search" id="tpl-q" class="tpl-q" placeholder="タイトル・本文で検索" value="${esc(S.tplQ || "")}" aria-label="テンプレを検索">${canWrite() ? `<button class="btn" type="button" data-act="tpl-new">テンプレを追加</button>` : ""}</div>
+    ${cats.length ? `<div class="tpl-cats" role="group" aria-label="カテゴリ">${[["all", "すべて"], ...cats.map(c => [c, c])].map(([v, l]) => `<button type="button" class="tpl-cat${S.tplCat === v ? " on" : ""}" data-act="tpl-cat" data-v="${esc(v)}" aria-pressed="${S.tplCat === v}">${esc(l)}<span>${v === "all" ? list.length : list.filter(x => x.category === v).length}</span></button>`).join("")}</div>` : ""}`;
+  if (!list.length) return head + `<div class="empty"><p>まだテンプレがありません。</p><p class="muted" style="font-size:.85rem">メンターへの依頼文、体験参加者への案内、会場予約の連絡など、よく送る文章を入れておくと「コピー」ですぐ使えます。</p>${canWrite() ? `<button class="btn small" type="button" data-act="tpl-new">最初のテンプレを追加</button>` : ""}</div>`;
+  return head + `<div class="tpl-grid">${shown.map(tp => `<article class="panel tpl-card" data-text="${esc((tp.title + " " + tp.body + " " + (tp.category || "")).toLowerCase())}">
+      <div class="tpl-h"><h3>${esc(tp.title)}</h3>${tp.category ? `<span class="pill plain">${esc(tp.category)}</span>` : ""}</div>
+      <div class="tpl-body">${esc(tp.body)}</div>
+      <div class="tpl-f"><button class="btn small" type="button" data-act="tpl-copy" data-id="${esc(tp.id)}">コピー</button>${canEditTpl(tp) ? `<button class="link" type="button" data-act="tpl-edit" data-id="${esc(tp.id)}">編集</button>` : ""}<span class="muted">${esc(memName(tp.createdBy))}</span></div>
+    </article>`).join("")}</div><p class="muted tpl-none" hidden>見つかりませんでした。</p>`;
+}
+function applyTplFilter() {
+  const q = (S.tplQ || "").trim().toLowerCase(); let n = 0;
+  document.querySelectorAll(".tpl-card").forEach(c => { const hit = !q || q.split(/\s+/).every(w => c.dataset.text.includes(w)); c.hidden = !hit; if (hit) n++; });
+  const none = document.querySelector(".tpl-none"); if (none) none.hidden = n > 0 || !document.querySelector(".tpl-card");
+}
+document.addEventListener("input", e => { if (e.target.id === "tpl-q") { S.tplQ = e.target.value; applyTplFilter(); } });
+function tplDialog(tp) {
+  const v = tp || { title: "", category: S.tplCat !== "all" ? S.tplCat : "", body: "" };
+  const cats = [...new Set((S.templates || []).map(x => x.category).filter(Boolean))];
+  const body = fld("タイトル", `<input name="title" id="f-title" required maxlength="40" value="${esc(v.title)}" placeholder="例：メンター依頼（初回）">`, { full: true, req: true }) +
+    fld("カテゴリ（任意）", `<input name="category" id="f-category" list="tpl-cat-list" maxlength="20" value="${esc(v.category || "")}" placeholder="例：メンター、体験参加者、会場"><datalist id="tpl-cat-list">${cats.map(c => `<option value="${esc(c)}">`).join("")}</datalist>`, { full: true }) +
+    fld("本文", `<textarea name="body" id="f-body" required rows="9" placeholder="〇〇様&#10;&#10;明治就活サークルの佐藤です。…">${esc(v.body)}</textarea>`, { full: true, req: true, help: "名前や日付など毎回変わるところは【 】で囲んでおくと、コピー後に直す場所が分かりやすくなります" });
+  openDlg(tp ? "テンプレを編集" : "テンプレを追加", body, {
+    submit: async f => {
+      const data = { title: f.title.trim(), category: (f.category || "").trim(), body: f.body.replace(/\s+$/, "") };
+      if (!data.title) return showErr("タイトルを入力してください。"), false;
+      if (!data.body.trim()) return showErr("本文を入力してください。"), false;
+      if (tp) await updateDoc(doc(db, "templates", tp.id), data);
+      else { Object.assign(data, { order: Date.now(), createdBy: uid(), createdAt: serverTimestamp() }); await addDoc(collection(db, "templates"), data); S.anim = "in"; }
+    },
+    del: tp ? () => deleteDoc(doc(db, "templates", tp.id)) : null,
+    draft: tp ? null : "tpl"
+  });
+}
+
 /* ===================== 議事録 ===================== */
 // 文字起こしを貼ると、GitHubの自動実行（5分ごと）がGeminiで要約して書き戻す
 const MIN_STALE = 20 * 60 * 1000;
@@ -1164,7 +1294,7 @@ function taskDialog(t, date) {
   if (t && !canEditTask(t)) {
     const sw = sharedAll(t) ? "全員" : t.shareWith.map(memName).join("・");
     openDlg("業務の詳細", fld("日時", `<div class="ro">${md(t.date)} ${timeLabel(t)}</div>`) + fld("担当者", `<div class="ro">${esc(ownersOf(t).map(memName).join("・") || "未定")}</div>`) +
-      fld("担当業務", `<div class="ro">${esc(taskTitle(t))}</div>`, { full: true }) + (t.detail && t.routine !== "__other" ? fld("内容・メモ", `<div class="ro">${esc(t.detail)}</div>`, { full: true }) : "") +
+      fld("担当業務", `<div class="ro">${esc(t.label ? `${t.label}（${t.routine}）` : taskTitle(t))}</div>`, { full: true }) + (t.detail && t.routine !== "__other" ? fld("内容・メモ", `<div class="ro">${esc(t.detail)}</div>`, { full: true }) : "") +
       fld("共有", `<div class="ro">${esc(sw)}</div>`) + fld("登録した人", `<div class="ro">${esc(memName(t.createdBy))}</div>`, { help: "編集できるのは登録した人と管理者・副管理者です" }), { readOnly: true });
     return;
   }
@@ -1187,6 +1317,7 @@ function taskDialog(t, date) {
     fld("開始", `<input type="time" name="start" id="f-start" value="${esc(v.start || "")}">`, { half: true }) +
     fld("終了（任意）", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { half: true }) +
     fld("担当業務", sel("routine", routineOpts, v.routine === "__other" ? "__other" : v.routine), { full: true }) +
+    `<div class="field full" id="label-field" ${needsLabel(v.routine) ? "" : "hidden"}><span class="lbl">当日の内容<span class="req">必須</span></span><input name="label" id="f-label" maxlength="30" value="${esc(v.label || "")}" placeholder="例：GD講習会、ES添削会"><span class="help">カレンダーやホームには、ここに書いた内容が表示されます</span></div>` +
     moreBtn("メモ・共有する人を設定（いまは全員に共有）") +
     fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true, opt: true }) +
     asOpt(shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。"));
@@ -1194,6 +1325,8 @@ function taskDialog(t, date) {
     submit: async f => {
       const allday = !!f.allday || !f.start;
       const start = allday ? "" : f.start, end = allday ? "" : (f.end || "");
+      const label = needsLabel(f.routine) ? (f.label || "").trim() : "";
+      if (needsLabel(f.routine) && !label) return showErr("当日の内容（例：GD講習会）を入力してください。"), false;
       if (f.routine === "__other" && !f.detail.trim()) return openMore(true), showErr("「その他」を選んだときは内容を記述してください。"), false;
       if (end && start && end < start) return showErr("終了時刻が開始時刻より前になっています。"), false;
       const multi = !t && f.dmode === "multi";
@@ -1202,7 +1335,7 @@ function taskDialog(t, date) {
       if (dates.length > 31) return showErr("一度に登録できるのは31日分までです。"), false;
       const owners = f.__fd.getAll("owners");
       if (!owners.length) return showErr("担当者を1人以上選んでください。"), false;
-      const data = { date: dates[0], start, end, owner: owners[0], owners, routine: f.routine, detail: f.detail.trim(), shareWith: readShare(f, "share") };
+      const data = { date: dates[0], start, end, owner: owners[0], owners, routine: f.routine, label, detail: f.detail.trim(), shareWith: readShare(f, "share") };
       if (t) await updateDoc(doc(db, "tasks", t.id), data);
       else {
         Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() });
@@ -1222,7 +1355,9 @@ function taskDialog(t, date) {
   ad.addEventListener("change", () => { if (!ad.checked && !st.value) st.value = "17:30"; syncAd(); }); syncAd();
   if (!t) { wireMultiDate(v.date); restoreDraft(); syncAd(); syncDateMode(); }
   // 「その他」を選んだときは内容の記入が必要なので、メモ欄を開く
-  const rt = form.querySelector('[name="routine"]'); const chkOther = () => { if (rt && rt.value === "__other") openMore(false); };
+  const rt = form.querySelector('[name="routine"]'); const lf = form.querySelector("#label-field");
+  const chkOther = () => { if (!rt) return; if (rt.value === "__other") openMore(false);
+    const show = needsLabel(rt.value); if (lf && lf.hidden === show) { lf.hidden = !show; if (show) { lf.classList.remove("pop"); void lf.offsetWidth; lf.classList.add("pop"); } } };
   if (rt) rt.addEventListener("change", chkOther); chkOther(); autoMore();
 }
 
@@ -1422,6 +1557,16 @@ document.addEventListener("click", async e => {
   if (act === "issue-new") { if (canWrite()) issueDialog(null); return; }
   if (act === "issue-open") return issueDialog((S.issues || []).find(i => i.id === id));
   if (act === "issue-showdone") { S.showDoneIssues = !S.showDoneIssues; render(); return; }
+  if (act === "rsvp") {
+    const t = S.tasks.find(x => x.id === id); if (!t) return;
+    try { await updateDoc(doc(db, "tasks", id), new FieldPath("rsvp", uid()), a.dataset.v); toast(`「${RSVP.find(([v]) => v === a.dataset.v)[1]}」で回答しました`); } catch (err) { toast(errMsg(err), "error"); }
+    return;
+  }
+  if (act === "rep-write") { reportDialog(id); return; }
+  if (act === "tpl-new") { if (canWrite()) tplDialog(null); return; }
+  if (act === "tpl-edit") { const tp = (S.templates || []).find(x => x.id === id); if (tp) tplDialog(tp); return; }
+  if (act === "tpl-copy") { const tp = (S.templates || []).find(x => x.id === id); if (tp) copyPlain(tp.body, "「" + tp.title + "」をコピーしました"); return; }
+  if (act === "tpl-cat") { S.tplCat = a.dataset.v; render(); return; }
   if (act === "min-new") { if (canWrite()) minuteDialog(); return; }
   if (act === "min-open") { S.minId = id; S.anim = "l"; render(); window.scrollTo(0, 0); return; }
   if (act === "min-back") { S.minId = null; S.anim = "r"; render(); return; }

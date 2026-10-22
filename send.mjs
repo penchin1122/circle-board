@@ -25,7 +25,7 @@ export function shouldSend({ now, notifyTime = "07:30", enabled = true, lastDate
   return now.time >= notifyTime && now.time < "12:00";
 }
 export function buildMessages(tasks, today) {
-  const label = t => t.routine && t.routine !== "__other" ? t.routine : (t.detail || "業務");
+  const label = t => t.label ? `${t.label}（${t.routine}）` : t.routine && t.routine !== "__other" ? t.routine : (t.detail || "業務");
   const time = t => !t.start ? "終日" : t.start + (t.end ? "–" + t.end : "〜");
   const by = {};
   const ownersOf = t => (Array.isArray(t.owners) && t.owners.length ? t.owners : (t.owner ? [t.owner] : []));
@@ -37,6 +37,17 @@ export function buildMessages(tasks, today) {
   });
 }
 
+/* 参加可否の催促：3日以内にある「当日運営」で、まだ回答していない人に朝まとめて送る */
+export function addDaysStr(d, n) { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+export function buildRsvpMessages(tasks, memberIds, today) {
+  const evs = tasks.filter(t => /当日運営/.test(t.routine || "") && t.date > today && t.date <= addDaysStr(today, 3))
+    .sort((a, b) => (a.date + (a.start || "")).localeCompare(b.date + (b.start || "")));
+  const md = d => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+  return memberIds.map(id => {
+    const list = evs.filter(t => !(t.rsvp || {})[id]);
+    return list.length ? { owner: id, title: "参加の回答をお願いします", body: list.map(t => `${md(t.date)} ${t.start || ""} ${t.label || t.routine}`.replace(/\s+/g, " ")).join("\n") } : null;
+  }).filter(Boolean);
+}
 export function inQuietHours(now) { return now.time < "07:00" || now.time >= "23:00"; }
 export function buildIssueMessages(issues, members) {
   // members: [{ id, name }]（有効なメンバー）。追加した本人には送らない
@@ -228,6 +239,12 @@ async function main() {
       if (!mem.exists || mem.data().status !== "active") continue;
       await sendTo(db, fcm, m.owner, mem.data().name || m.owner, m.title, m.body, "morning");
     }
+    // 参加可否の催促
+    const evSnap = await db.collection("tasks").where("date", ">", now.date).where("date", "<=", addDaysStr(now.date, 3)).get();
+    const act = await db.collection("members").where("status", "==", "active").get();
+    const rs = buildRsvpMessages(evSnap.docs.map(d => d.data()), act.docs.map(d => d.id), now.date);
+    console.log(`参加の回答待ち ${rs.length}人`);
+    for (const m of rs) await sendTo(db, fcm, m.owner, (act.docs.find(d => d.id === m.owner).data().name) || m.owner, m.title, m.body, "rsvp");
   }
   await issueNotify(db, fcm, cfg, now);
   await summarizeMinutes(db, fcm);
