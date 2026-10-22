@@ -563,6 +563,7 @@ function isBankHoliday(d) {
   if (w === 1) { const prev = new Date(y, mo, day - 1); if (isHol(prev.getMonth(), prev.getDate())) return true; }
   return false;
 }
+function cardClosing(useDate) { const d = parse(useDate); return ymd(new Date(d.getFullYear(), d.getMonth() + (d.getDate() <= 15 ? 0 : 1), 15)); }
 function cardPayDate(useDate) {
   const d = parse(useDate); const add = d.getDate() <= 15 ? 1 : 2;
   const p = new Date(d.getFullYear(), d.getMonth() + add, 10);
@@ -578,10 +579,17 @@ function bankBalance(asOf) {
     if (!isCard(r)) { if (r.date <= asOf) bal -= amt; return; }
     const pay = cardPayDate(r.date);
     if (pay <= asOf) bal -= amt;
-    else if (r.date <= asOf) upcoming[pay] = (upcoming[pay] || 0) + amt;   // 使ったが、まだ引き落とされていない分
+    else if (r.date <= asOf) { const u = upcoming[pay] = upcoming[pay] || { date: pay, closing: cardClosing(r.date), amount: 0, count: 0 }; u.amount += amt; u.count++; }   // 使ったが、まだ引き落とされていない分
   });
-  const next = Object.keys(upcoming).sort()[0];
-  return { bal, pending: Object.values(upcoming).reduce((a, b) => a + b, 0), next: next ? { date: next, amount: upcoming[next] } : null };
+  const list = Object.values(upcoming).sort((a, b) => a.date.localeCompare(b.date));
+  // 次回・その次の引き落とし（利用がなくても日付は出す）
+  const pays = []; let probe = parse(asOf);
+  for (let i = 0; pays.length < 2 && i < 4; i++) {
+    const c = new Date(probe.getFullYear(), probe.getMonth() + i, 15);
+    const pd = cardPayDate(ymd(c));
+    if (pd > asOf && !pays.some(p => p.date === pd)) pays.push(list.find(x => x.date === pd) || { date: pd, closing: ymd(c), amount: 0, count: 0 });
+  }
+  return { bal, pending: list.reduce((a, b) => a + b.amount, 0), pays };
 }
 function vMoney() {
   const m = S.moneyMonth; const rows = S.ledger.filter(r => (r.date || "").startsWith(m)).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -595,12 +603,15 @@ function vMoney() {
   const bars = (o, cls) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div class="hbar ${cls}"><span>${esc(k)}</span><span class="track"><i style="width:${(v / maxC * 100).toFixed(1)}%"></i></span><span class="val">${yen(v)}</span></div>`).join("");
   const stPill = s => s === "未精算" ? `<span class="pill warn">未精算</span>` : s === "精算済" ? `<span class="pill good">精算済</span>` : `<span class="pill plain">${esc(s || "対象外")}</span>`;
   return `<div class="bar"><h2 class="vh">収支</h2>${monthNav("moneyMonth")}${S.isAdmin ? `<button class="btn sec" type="button" data-act="led-import">CSVを取り込む</button><button class="btn" type="button" data-act="led-new">収支を記録</button>` : `<span class="pill plain">閲覧のみ</span>`}</div>
-  <div class="figs">
+  <div class="figs money-figs">
     <div class="fig"><div class="k">収入</div><div class="v pos">${cu(inc, "yen")}</div></div>
     <div class="fig"><div class="k">支出</div><div class="v neg">${cu(exp, "yen")}</div></div>
     <div class="fig"><div class="k">月の収支</div><div class="v ${inc - exp >= 0 ? "pos" : "neg"}">${cu(inc - exp, "yen", inc - exp >= 0 ? "+" : "−")}</div></div>
     <div class="fig"><div class="k">銀行残高（${m === THISMONTH ? "今日" : md(asOf).replace(/\(.\)/, "")}時点）</div><div class="v">${cu(bk.bal, "yen", bk.bal < 0 ? "−" : "")}</div>
-      <div class="s">${bk.next ? `カード ${yen(bk.next.amount)} が${md(bk.next.date)}に引き落とし予定${bk.pending > bk.next.amount ? `（未引き落とし計 ${yen(bk.pending)}）` : ""}` : "未引き落としのカード利用なし"}</div></div>
+      <div class="s">${bk.pending ? `カードの未引き落とし ${yen(bk.pending)} を引く前の額` : "未引き落としのカード利用なし"}</div></div>
+    ${bk.pays.map((p, i) => { const fixed = p.closing <= asOf; const from = parse(p.closing); from.setMonth(from.getMonth() - 1); from.setDate(16);
+      return `<div class="fig card-pay"><div class="k">${i === 0 ? "次回のカード" : "その次のカード"}　${md(p.date)}</div><div class="v neg">${cu(p.amount, "yen")}</div>
+        <div class="s">${md(ymd(from)).replace(/\(.\)/, "")}〜${md(p.closing).replace(/\(.\)/, "")}利用・${p.count}件・${fixed ? "確定" : "締め前（増える可能性あり）"}</div></div>`; }).join("")}
   </div>
   <div class="stack">
     ${rows.length ? `<div class="tablewrap"><table class="ledger-table"><thead><tr><th>日付</th><th>項目</th><th>区分</th><th>カテゴリ</th><th class="num">金額</th><th>担当者</th><th>支払方法</th><th>精算</th></tr></thead><tbody>

@@ -706,3 +706,7 @@ dialog{overflow-x:hidden}
 .cal .dow.sun,.mp-dow.sun{color:var(--bad)}
 .cal .dow.sat,.mp-dow.sat{color:var(--accent)}
 .fig .s{font-size:.74rem;color:var(--muted);margin-top:2px;line-height:1.5}
+/* 収支の数字：PCは3列×2段、スマホは2列 */
+.money-figs{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:600px){.money-figs{grid-template-columns:repeat(2,minmax(0,1fr))}.money-figs .fig .v{font-size:1.2rem}}
+.fig.card-pay .k{white-space:normal}
