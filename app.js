@@ -1127,7 +1127,7 @@ function sheetContent(sh) {
       return `<button type="button" class="mp-cell${v === cur ? " on" : ""}${v === THISMONTH ? " now" : ""}" data-act="mp-pick" data-v="${v}">${i + 1}月</button>`; }).join("");
     return { title: "月を選ぶ",
       body: `<div class="mp-year"><button type="button" class="ghost" data-act="mp-year" data-step="-1" aria-label="前の年">‹</button><b>${y}年</b><button type="button" class="ghost" data-act="mp-year" data-step="1" aria-label="次の年">›</button></div>
-        <div class="mp-grid">${cells}</div>`,
+        <div class="mon-grid">${cells}</div>`,
       foot: cur !== THISMONTH ? `<div class="sp"><button class="btn sec" type="button" data-act="mp-pick" data-v="${THISMONTH}">今月に戻る</button></div>` : "" };
   }
   if (sh.kind === "kpi") {
