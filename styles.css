@@ -774,3 +774,7 @@ dialog{overflow-x:hidden}
 @media (max-width:600px){.tpl-q{max-width:none;order:3;flex-basis:100%}}
 /* 複数日の選択カレンダー（スマホ）：押しやすい大きさの丸に */
 @media (max-width:600px){.mp-day{height:auto;aspect-ratio:1;max-height:44px;width:100%;justify-self:center}.mp-grid{gap:4px 2px}}
+#mentor-field.pop{animation:soft-in .25s var(--ease-out)}
+.rep-from{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;background:var(--surface-2);border-radius:6px;padding:8px 12px;font-size:.88rem}
+.rep-from > span:first-child{font-size:.75rem;font-weight:700;color:var(--muted)}
+.rep-from b{color:var(--navy)}

@@ -315,7 +315,7 @@ function rsvpBox(t) {
 function taskItem(t, opts = {}) {
   const sw = sharedAll(t) ? "全員に共有" : "共有：" + t.shareWith.map(memName).join("・");
   const late = opts.late ? `<span class="pill bad">${daysBetween(t.date, TODAY)}日遅れ</span> ` : "";
-  const sub = [opts.showDate ? md(t.date) : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
+  const sub = [opts.showDate ? md(t.date) : "", t.mentors ? "メンター：" + t.mentors : "", t.routine && t.routine !== "__other" && t.detail ? t.detail : "", sw, "登録：" + memName(t.createdBy)].filter(Boolean).join(" ／ ");
   return `<div class="task${t.done ? " done" : ""}" style="--mc:${mColor(ownersOf(t)[0])}">
     <div class="time">${timeLabel(t)}</div>
     <div><div class="what">${late}${esc(taskTitle(t))}${t.label && t.routine ? ` <span class="pill plain">${esc(t.routine)}</span>` : ""}</div><div class="whos">${whoTags(t)}</div></div>
@@ -707,6 +707,9 @@ function vForms() {
     </article>`).join("")}</div>`;
 }
 /* ===================== 活動レポート ===================== */
+// これまでに書かれたメンターの名前（予定とレポートの両方から）
+const pastMentors = () => [...new Set([...(S.reports || []), ...S.tasks].flatMap(x => (x.mentors || "").split(/[、,，・]/)).map(x => x.trim()).filter(Boolean))].slice(0, 12);
+const mentorSugg = () => { const p = pastMentors(); return p.length ? `<div class="ment-sugg">${p.map(n => `<button type="button" class="chip-btn" data-ment="${esc(n)}">＋${esc(n)}</button>`).join("")}</div>` : ""; };
 // 「当日運営」の予定が終わると、自動で「未記入」として並ぶ。レポートのIDは予定のIDと同じ
 function vReports() {
   const m = S.repMonth; const reps = S.reports || [];
@@ -721,7 +724,7 @@ function vReports() {
   return head + `<div class="rep-list">${items.map(x => {
     const r = x.r; const staff = x.t ? rsvpGroups(x.t).yes.length : 0;
     const hd = `<div class="rep-h"><b>${md(x.date)} ${esc(x.label)}</b>${r ? `<span class="pill good">記入済</span>` : `<span class="pill warn">未記入</span>`}</div>`;
-    if (!r) return `<article class="panel rep-card todo">${hd}<div class="muted rep-meta">${x.t ? `担当：${esc(ownersOf(x.t).map(memName).join("・") || "未定")}` : ""}${staff ? `・参加した運営 ${staff}人` : ""}</div>${canWrite() ? `<button class="btn small" type="button" data-act="rep-write" data-id="${esc(x.id)}">レポートを書く</button>` : ""}</article>`;
+    if (!r) return `<article class="panel rep-card todo">${hd}<div class="muted rep-meta">${x.t ? `担当：${esc(ownersOf(x.t).map(memName).join("・") || "未定")}` : ""}${staff ? `・参加した運営 ${staff}人` : ""}${x.t && x.t.mentors ? `<br>メンター：${esc(x.t.mentors)}` : ""}</div>${canWrite() ? `<button class="btn small" type="button" data-act="rep-write" data-id="${esc(x.id)}">レポートを書く</button>` : ""}</article>`;
     return `<article class="panel rep-card">${hd}
       <div class="rep-nums"><div><span>参加者</span><b>${num(r.participants)}人</b></div><div><span>うち体験</span><b>${num(r.trial || 0)}人</b></div>${staff ? `<div><span>運営</span><b>${staff}人</b></div>` : ""}</div>
       ${r.mentors ? `<div class="rep-line"><span>メンター</span>${esc(r.mentors)}</div>` : ""}
@@ -738,12 +741,13 @@ function ckRange(d) {
 function reportDialog(id) {
   const t = S.tasks.find(x => x.id === id); const r = (S.reports || []).find(x => x.id === id);
   const date = t ? t.date : r && r.date; const label = t ? taskTitle(t) : (r && r.label) || "活動"; if (!date) return;
-  const v = r || { participants: "", trial: "", mentors: "", good: "", improve: "" };
-  const past = [...new Set((S.reports || []).flatMap(x => (x.mentors || "").split(/[、,，・]/)).map(x => x.trim()).filter(Boolean))].slice(0, 12);
-  const body = fld("参加者数", `<input type="number" inputmode="numeric" min="0" step="1" name="participants" id="f-participants" required value="${esc(v.participants)}">`, { half: true, req: true }) +
+  const v = r || { participants: "", trial: "", mentors: (t && t.mentors) || "", good: "", improve: "" };
+  const fromCal = !r && t && t.mentors;
+  const past = pastMentors();
+  const body = `<div class="rep-from full"><span>活動</span><b>${md(date)} ${esc(label)}</b>${t && t.start ? `<span class="muted">${esc(t.start)}${t.end ? "–" + esc(t.end) : ""}</span>` : ""}</div>` + fld("参加者数", `<input type="number" inputmode="numeric" min="0" step="1" name="participants" id="f-participants" required value="${esc(v.participants)}">`, { half: true, req: true }) +
     fld("うち体験参加者", `<input type="number" inputmode="numeric" min="0" step="1" name="trial" id="f-trial" value="${esc(v.trial)}">`, { half: true }) +
     `<p class="kpi-auto full">体験参加者数は、KPI（${ckRange(date)}）に自動で足されます</p>` +
-    fld("メンター", `<input name="mentors" id="f-mentors" value="${esc(v.mentors || "")}" placeholder="例：田中さん（商社）、山本さん">${past.length ? `<div class="ment-sugg">${past.map(n => `<button type="button" class="chip-btn" data-ment="${esc(n)}">＋${esc(n)}</button>`).join("")}</div>` : ""}`, { full: true, help: "複数いるときは「、」で区切る" }) +
+    fld("メンター", `<input name="mentors" id="f-mentors" value="${esc(v.mentors || "")}" placeholder="例：田中さん（商社）、山本さん">${past.length ? `<div class="ment-sugg">${past.map(n => `<button type="button" class="chip-btn" data-ment="${esc(n)}">＋${esc(n)}</button>`).join("")}</div>` : ""}`, { full: true, help: fromCal ? "業務カレンダーに登録されていたメンターを入れてあります。違っていれば直してください" : "複数いるときは「、」で区切る" }) +
     fld("良かったこと", `<textarea name="good" id="f-good" rows="2" placeholder="1〜2行で">${esc(v.good || "")}</textarea>`, { full: true }) +
     fld("次回の改善点", `<textarea name="improve" id="f-improve" rows="2" placeholder="1〜2行で">${esc(v.improve || "")}</textarea>`, { full: true });
   openDlg(`${md(date)} ${label}のレポート`, body, {
@@ -1323,6 +1327,7 @@ function taskDialog(t, date) {
     fld("終了（任意）", `<input type="time" name="end" id="f-end" value="${esc(v.end || "")}">`, { half: true }) +
     fld("担当業務", sel("routine", routineOpts, v.routine === "__other" ? "__other" : v.routine), { full: true }) +
     `<div class="field full" id="label-field" ${needsLabel(v.routine) ? "" : "hidden"}><span class="lbl">当日の内容<span class="req">必須</span></span><input name="label" id="f-label" maxlength="30" value="${esc(v.label || "")}" placeholder="例：GD講習会、ES添削会"><span class="help">カレンダーやホームには、ここに書いた内容が表示されます</span></div>` +
+    `<div class="field full" id="mentor-field" ${needsLabel(v.routine) ? "" : "hidden"}><span class="lbl">当日のメンター（任意）</span><input name="mentors" id="f-mentors" maxlength="80" value="${esc(v.mentors || "")}" placeholder="例：田中さん（商社）、山本さん">${mentorSugg()}<span class="help">決まっていれば入れておくと、活動レポートに自動で入ります。複数いるときは「、」で区切る</span></div>` +
     moreBtn("メモ・共有する人を設定（いまは全員に共有）") +
     fld("内容・メモ", `<textarea name="detail" id="f-detail" placeholder="定例業務以外の場合は内容を記述してください">${esc(v.detail || "")}</textarea>`, { full: true, opt: true }) +
     asOpt(shareBox("share", v.shareWith, "全員のカレンダーに表示されます。共有した人のホームの「今日やること」に出ます。"));
@@ -1331,6 +1336,7 @@ function taskDialog(t, date) {
       const allday = !!f.allday || !f.start;
       const start = allday ? "" : f.start, end = allday ? "" : (f.end || "");
       const label = needsLabel(f.routine) ? (f.label || "").trim() : "";
+      const mentors = needsLabel(f.routine) ? (f.mentors || "").trim() : "";
       if (needsLabel(f.routine) && !label) return showErr("当日の内容（例：GD講習会）を入力してください。"), false;
       if (f.routine === "__other" && !f.detail.trim()) return openMore(true), showErr("「その他」を選んだときは内容を記述してください。"), false;
       if (end && start && end < start) return showErr("終了時刻が開始時刻より前になっています。"), false;
@@ -1340,7 +1346,7 @@ function taskDialog(t, date) {
       if (dates.length > 31) return showErr("一度に登録できるのは31日分までです。"), false;
       const owners = f.__fd.getAll("owners");
       if (!owners.length) return showErr("担当者を1人以上選んでください。"), false;
-      const data = { date: dates[0], start, end, owner: owners[0], owners, routine: f.routine, label, detail: f.detail.trim(), shareWith: readShare(f, "share") };
+      const data = { date: dates[0], start, end, owner: owners[0], owners, routine: f.routine, label, mentors, detail: f.detail.trim(), shareWith: readShare(f, "share") };
       if (t) await updateDoc(doc(db, "tasks", t.id), data);
       else {
         Object.assign(data, { done: false, createdBy: uid(), createdAt: serverTimestamp() });
@@ -1360,9 +1366,9 @@ function taskDialog(t, date) {
   ad.addEventListener("change", () => { if (!ad.checked && !st.value) st.value = "17:30"; syncAd(); }); syncAd();
   if (!t) { wireMultiDate(v.date); restoreDraft(); syncAd(); syncDateMode(); }
   // 「その他」を選んだときは内容の記入が必要なので、メモ欄を開く
-  const rt = form.querySelector('[name="routine"]'); const lf = form.querySelector("#label-field");
+  const rt = form.querySelector('[name="routine"]'); const lfs = [form.querySelector("#label-field"), form.querySelector("#mentor-field")].filter(Boolean);
   const chkOther = () => { if (!rt) return; if (rt.value === "__other") openMore(false);
-    const show = needsLabel(rt.value); if (lf && lf.hidden === show) { lf.hidden = !show; if (show) { lf.classList.remove("pop"); void lf.offsetWidth; lf.classList.add("pop"); } } };
+    const show = needsLabel(rt.value); lfs.forEach(lf => { if (lf.hidden === show) { lf.hidden = !show; if (show) { lf.classList.remove("pop"); void lf.offsetWidth; lf.classList.add("pop"); } } }); };
   if (rt) rt.addEventListener("change", chkOther); chkOther(); autoMore();
 }
 
