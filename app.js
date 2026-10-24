@@ -535,7 +535,7 @@ function vKpi() {
   }
   const rows = ks.map(k => {
     const w = k.weekly || {}; const editable = canManage() || (k.owner === uid() && canWrite());
-    const tools = canManage() ? `<div class="kpi-tools"><button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button><button class="link" type="button" style="color:var(--bad)" data-act="kpi-del" data-id="${esc(k.id)}">${S.armDel === k.id ? "本当に削除する（もう一度押す）" : "削除"}</button></div>` : "";
+    const tools = canManage() ? `<div class="kpi-tools"><button class="link" type="button" data-act="kpi-edit" data-id="${esc(k.id)}">編集</button></div>` : "";
     const tgt = Number(k.target) > 0 ? `目標 ${num(k.target)}${esc(k.unit || "")}` : "目標未設定";
     return `<tr><td><span class="kname"><b>${esc(k.name)}</b>${isTrack(k) ? ` <span class="pill plain">記録のみ</span>` : ""}</span><div class="muted" style="font-size:.75rem">${esc(memName(k.owner))}・${k.mode === "latest" ? "最新値" : "合計"}・${tgt}</div>${tools}</td>
       ${weeks.map(wk => { const v = w[wk] && w[wk].value !== null && w[wk].value !== undefined ? w[wk].value : "";
@@ -1082,11 +1082,11 @@ function applyFormState(st) {
   form.querySelectorAll("input[name],select[name],textarea[name]").forEach(el => { if (el.id !== "f-type" && !/_all$/.test(el.name)) set(el); });
 }
 let draftKey = null;
-function openDlg(title, body, { submit, del, readOnly, draft } = {}) {
+function openDlg(title, body, { submit, del, readOnly, draft, delInBody } = {}) {
   S.sheet = null; form.classList.remove("is-sheet");
   form.innerHTML = `<div class="dlg-h"><h3>${esc(title)}</h3><button type="button" data-close aria-label="閉じる">×</button></div>
-    <div class="dlg-b">${body}<p class="err" id="f-err" hidden></p></div>
-    <div class="dlg-f">${del ? `<button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button>` : ""}<div class="sp">${readOnly ? `<button class="btn" type="button" data-close>閉じる</button>` : `<button class="btn sec" type="button" data-close>キャンセル</button><button class="btn" type="submit">保存</button>`}</div></div>`;
+    <div class="dlg-b">${body}${del && delInBody ? `<div class="danger-zone"><div><b>${esc(delInBody.label)}</b><span class="help">${esc(delInBody.help || "")}</span></div><button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button></div>` : ""}<p class="err" id="f-err" hidden></p></div>
+    <div class="dlg-f">${del && !delInBody ? `<button class="btn sec" type="button" id="f-del" style="color:var(--bad);border-color:var(--bad)">削除</button>` : ""}<div class="sp">${readOnly ? `<button class="btn" type="button" data-close>閉じる</button>` : `<button class="btn sec" type="button" data-close>キャンセル</button><button class="btn" type="submit">保存</button>`}</div></div>`;
   onSubmit = submit; onDelete = del; draftKey = draft || null;
   showDlg();
   const f = form.querySelector("input:not([type=checkbox]),select,textarea"); if (f && !readOnly) f.focus();
@@ -1290,7 +1290,8 @@ function kpiDialog(k, preset) {
       if (k) await updateDoc(doc(db, "kpis", k.id), data);
       else { data.weekly = {}; data.order = Date.now(); data.createdAt = serverTimestamp(); await addDoc(collection(db, "kpis"), data); }
     },
-    del: k ? () => deleteDoc(doc(db, "kpis", k.id)) : null
+    del: k ? () => deleteDoc(doc(db, "kpis", k.id)) : null,
+    delInBody: k ? { label: "このKPIを削除", help: "MTG・月末ごとに入力した進捗も一緒に消えます。元に戻せません" } : null
   });
   wireShare("viewers");
   const tc = form.querySelector("#f-track"), tf = form.querySelector("#target-field");

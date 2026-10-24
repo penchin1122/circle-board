@@ -778,3 +778,8 @@ dialog{overflow-x:hidden}
 .rep-from{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;background:var(--surface-2);border-radius:6px;padding:8px 12px;font-size:.88rem}
 .rep-from > span:first-child{font-size:.75rem;font-weight:700;color:var(--muted)}
 .rep-from b{color:var(--navy)}
+/* 編集画面の一番下の削除欄 */
+.danger-zone{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;padding:12px 14px;border:1px solid var(--bad-soft);border-radius:8px;background:#FFFBFB}
+.danger-zone b{display:block;font-size:.88rem;color:var(--bad)}
+.danger-zone .help{display:block;margin-top:2px}
+.danger-zone .btn{flex:none}
